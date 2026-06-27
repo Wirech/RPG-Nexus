@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+
+# Database
+*.db
+*.db-journal
+
+# Uploads (keep structure, ignore files)
+uploads/**/*
+!uploads/.gitkeep
+!uploads/tokens/.gitkeep
+!uploads/documents/.gitkeep
+!uploads/environments/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,341 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// USUÁRIOS E AUTENTICAÇÃO
+// ─────────────────────────────────────────
+
+model User {
+  id                 String    @id @default(cuid())
+  username           String    @unique
+  passwordHash       String
+  role               String    @default("pending") // admin | player | spectator | pending
+  status             String    @default("pending") // pending | active | blocked
+  linkedCharacterId  String?
+  linkedCharacter    Character? @relation(fields: [linkedCharacterId], references: [id])
+  createdAt          DateTime  @default(now())
+  approvedAt         DateTime?
+  approvedById       String?
+
+  accessRequest      AccessRequest?
+  auditLogs          AuditLog[]
+  grantedPermissions ResourcePermission[] @relation("GrantedBy")
+  userPermissions    ResourcePermission[] @relation("UserPermissions")
+}
+
+model AccessRequest {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status           String    @default("pending") // pending | approved | rejected
+  requestedAt      DateTime  @default(now())
+  reviewedAt       DateTime?
+  reviewedById     String?
+  rejectionReason  String?
+}
+
+model ResourcePermission {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation("UserPermissions", fields: [userId], references: [id], onDelete: Cascade)
+  resourceType String   // character | document | environment | monster
+  resourceId   String
+  permission   String   // view | edit
+  grantedById  String
+  grantedBy    User     @relation("GrantedBy", fields: [grantedById], references: [id])
+  grantedAt    DateTime @default(now())
+
+  @@unique([userId, resourceType, resourceId])
+}
+
+// ─────────────────────────────────────────
+// PERSONAGENS
+// ─────────────────────────────────────────
+
+model CharacterGroup {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  color       String?     // cor hex para identificação visual
+  order       Int         @default(0)
+  characters  Character[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model Character {
+  id              String         @id @default(cuid())
+  groupId         String
+  group           CharacterGroup @relation(fields: [groupId], references: [id])
+  name            String
+  tokenImage      String?        // caminho do arquivo
+  description     String?
+  historySummary  String?
+  historyFull     String?        // texto rico (HTML/JSON do TipTap)
+  nex             String?        // "5%", "15%", ..., "99%"
+  trilha          String?        // Agente | Combatente | Especialista | Ocultista
+  // Recursos vitais
+  pvCurrent       Int            @default(0)
+  pvMax           Int            @default(0)
+  sanCurrent      Int            @default(0)
+  sanMax          Int            @default(0)
+  peCurrent       Int            @default(0)
+  peMax           Int            @default(0)
+  // Atributos (valor do dado: "d4", "d6", "d8", "d12", "d20")
+  attrForca       String?        @default("d4")
+  attrAgilidade   String?        @default("d4")
+  attrIntelecto   String?        @default("d4")
+  attrPresenca    String?        @default("d4")
+  attrVigor       String?        @default("d4")
+  // Condições ativas (JSON array serializado)
+  conditions      String?        @default("[]")
+  isRevealed      Boolean        @default(false) // visível para players
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  skills          CharacterSkill[]
+  abilities       CharacterAbility[]
+  inventory       InventoryItem[]
+  linkedUsers     User[]
+  combatParticipants CombatParticipant[]
+}
+
+model CharacterSkill {
+  id          String    @id @default(cuid())
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  name        String
+  attribute   String    // forca | agilidade | intelecto | presenca | vigor
+  bonus       Int       @default(0)
+  trained     Boolean   @default(false)
+}
+
+model CharacterAbility {
+  id          String    @id @default(cuid())
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  peCost      Int?      @default(0)
+  type        String    // habilidade | ritual
+  element     String?   // Morte | Sangue | Energia | Conhecimento | Medo (para rituais)
+  isActive    Boolean   @default(true)
+}
+
+model InventoryItem {
+  id          String    @id @default(cuid())
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  name        String
+  quantity    Int       @default(1)
+  description String?
+  category    String?   // arma | proteção | item | consumível
+  weight      Float?
+}
+
+// ─────────────────────────────────────────
+// MONSTROS / BESTIÁRIO
+// ─────────────────────────────────────────
+
+model Monster {
+  id            String   @id @default(cuid())
+  name          String
+  tokenImage    String?
+  description   String?
+  lore          String?
+  threatLevel   String?  // Moderado | Perigoso | Mortal | Lendário
+  pvMax         Int      @default(0)
+  sanMax        Int?
+  // Atributos
+  attrForca     String?  @default("d4")
+  attrAgilidade String?  @default("d4")
+  attrIntelecto String?  @default("d4")
+  attrPresenca  String?  @default("d4")
+  attrVigor     String?  @default("d4")
+  // Resistências e imunidades (JSON arrays serializados)
+  resistances   String?  @default("[]")
+  immunities    String?  @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  attacks       MonsterAttack[]
+  abilities     MonsterAbility[]
+  combatParticipants CombatParticipant[]
+}
+
+model MonsterAttack {
+  id          String  @id @default(cuid())
+  monsterId   String
+  monster     Monster @relation(fields: [monsterId], references: [id], onDelete: Cascade)
+  name        String
+  damage      String  // ex: "2d6+3"
+  damageType  String? // físico | mental | paranormal
+  description String?
+  reach       String? // corpo a corpo | curto | médio | longo
+}
+
+model MonsterAbility {
+  id          String  @id @default(cuid())
+  monsterId   String
+  monster     Monster @relation(fields: [monsterId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  type        String  // habilidade | ritual | passiva
+}
+
+// ─────────────────────────────────────────
+// AMBIENTES
+// ─────────────────────────────────────────
+
+model Environment {
+  id          String                @id @default(cuid())
+  name        String
+  description String?               // texto rico
+  notes       String?
+  isRevealed  Boolean               @default(false)
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  images      EnvironmentImage[]
+  points      EnvironmentPoint[]
+}
+
+model EnvironmentImage {
+  id            String      @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  filePath      String
+  caption       String?
+  order         Int         @default(0)
+}
+
+model EnvironmentPoint {
+  id            String      @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  name          String
+  description   String?
+  linkedNpcId   String?
+}
+
+// ─────────────────────────────────────────
+// DOCUMENTOS DE INVESTIGAÇÃO
+// ─────────────────────────────────────────
+
+model Document {
+  id         String          @id @default(cuid())
+  title      String
+  content    String?         // texto rico
+  category   String?         // pista | relatório | foto | mapa | áudio | outro
+  tags       String?         @default("[]") // JSON array
+  isRevealed Boolean         @default(false)
+  sessionId  String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  images     DocumentImage[]
+}
+
+model DocumentImage {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  filePath   String
+  caption    String?
+}
+
+// ─────────────────────────────────────────
+// COMBATE
+// ─────────────────────────────────────────
+
+model CombatSession {
+  id           String             @id @default(cuid())
+  name         String
+  roundCurrent Int                @default(1)
+  status       String             @default("active") // active | paused | finished
+  createdAt    DateTime           @default(now())
+  finishedAt   DateTime?
+
+  participants CombatParticipant[]
+  events       CombatEvent[]
+}
+
+model CombatParticipant {
+  id              String        @id @default(cuid())
+  combatSessionId String
+  combatSession   CombatSession @relation(fields: [combatSessionId], references: [id], onDelete: Cascade)
+  entityType      String        // character | monster
+  characterId     String?
+  character       Character?    @relation(fields: [characterId], references: [id])
+  monsterId       String?
+  monster         Monster?      @relation(fields: [monsterId], references: [id])
+  customName      String?       // para múltiplos do mesmo monstro ex: "Fungo 1"
+  initiative      Int           @default(0)
+  pvCurrent       Int           @default(0)
+  pvMax           Int           @default(0)
+  sanCurrent      Int           @default(0)
+  sanMax          Int           @default(0)
+  peCurrent       Int           @default(0)
+  peMax           Int           @default(0)
+  conditions      String?       @default("[]")
+  isActive        Boolean       @default(true)
+  order           Int           @default(0) // ordem na iniciativa
+}
+
+model CombatEvent {
+  id              String        @id @default(cuid())
+  combatSessionId String
+  combatSession   CombatSession @relation(fields: [combatSessionId], references: [id], onDelete: Cascade)
+  round           Int
+  sourceId        String?       // participantId de origem
+  sourceName      String?
+  targetId        String?       // participantId alvo
+  targetName      String?
+  action          String        // damage | heal | san_damage | san_heal | pe_spend | pe_recover | condition_add | condition_remove | custom
+  field           String?       // pv | san | pe
+  value           Int?
+  description     String?
+  timestamp       DateTime      @default(now())
+}
+
+// ─────────────────────────────────────────
+// NOTAS DE SESSÃO
+// ─────────────────────────────────────────
+
+model SessionNote {
+  id            String   @id @default(cuid())
+  title         String
+  sessionNumber Int?
+  sessionDate   DateTime?
+  content       String?  // texto rico (TipTap JSON)
+  tags          String?  @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────
+// LOG DE AUDITORIA
+// ─────────────────────────────────────────
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  entityType   String   // character | monster | environment | document | combat | user | session
+  entityId     String
+  entityName   String?
+  action       String   // create | update | delete | access_granted | access_revoked | combat_event
+  fieldChanged String?
+  oldValue     String?
+  newValue     String?
+  context      String?  // manual | combat | system
+  timestamp    DateTime @default(now())
+}
