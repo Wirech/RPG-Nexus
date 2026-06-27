@@ -16,6 +16,14 @@ export function formatDate(date: Date | string): string {
   })
 }
 
+export function vitalColor(current: number, max: number): 'green' | 'yellow' | 'red' {
+  if (max === 0) return 'green'
+  const percentage = (current / max) * 100
+  if (percentage > 50) return 'green'
+  if (percentage > 25) return 'yellow'
+  return 'red'
+}
+
 export function rollDice(notation: string): { result: number; rolls: number[]; notation: string } {
   const match = notation.match(/^(\d+)?d(\d+)([+-]\d+)?$/i)
   if (!match) {
