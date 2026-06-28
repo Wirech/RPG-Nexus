@@ -18,35 +18,33 @@ import {
   VitalBar,
   ConditionBadge,
   TokenAvatar,
-  DiceDisplay,
   RichTextEditor,
   ConfirmDialog,
+  Tooltip,
 } from '@/components/shared';
-import { useAuth } from '@/hooks';
-import { cn, formatDate } from '@/lib/utils';
+import {
+  AbilitiesTab as AbilitiesTabComponent,
+  InventoryTab as InventoryTabComponent,
+  SkillsTab as SkillsTabComponent,
+} from '@/components/characters';
+import { useAuth, useTabNavigation } from '@/hooks';
+import { useTabStore } from '@/stores/tabStore';
+import { cn, formatDate, getUploadUrl } from '@/lib/utils';
+import { CONDITIONS, CONDITIONS_DATA, CONDITION_CATEGORIES } from '@/data/conditions';
 import type {
   Character,
   CharacterSkill,
   AuditLog,
-  DiceValue,
   CharacterRole,
   ConditionType,
   ElementType,
 } from '@/types';
 import toast from 'react-hot-toast';
 
-const DICE_VALUES: DiceValue[] = ['d4', 'd6', 'd8', 'd10' as DiceValue, 'd12', 'd20'];
 const TRILHAS: CharacterRole[] = ['Combatente', 'Especialista', 'Ocultista'];
 const NEX_VALUES = ['5%', '10%', '15%', '20%', '25%', '30%', '35%', '40%', '45%', '50%', '55%', '60%', '65%', '70%', '75%', '80%', '85%', '90%', '95%', '99%'];
 
-const CONDITIONS: ConditionType[] = [
-  'Abalado', 'Alquebrado', 'Apavorado', 'Atordoado', 'Cego', 'Confuso',
-  'Debilitado', 'Desprevenido', 'Exausto', 'Fascinado', 'Fraco', 'Imóvel',
-  'Inconsciente', 'Lento', 'Morto', 'Paralisado', 'Pressionado', 'Sangrando',
-  'Surdo', 'Vulnerável',
-];
-
-const ITEM_CATEGORIES = ['arma', 'proteção', 'item', 'consumível'] as const;
+const ITEM_CATEGORIES = ['arma', 'proteção', 'escudo', 'equipamento', 'consumível', 'misc'] as const;
 
 const SKILLS_BY_ATTR: Record<string, string[]> = {
   forca: ['Atletismo', 'Luta', 'Intimidação'],
@@ -57,14 +55,6 @@ const SKILLS_BY_ATTR: Record<string, string[]> = {
 };
 
 const ELEMENTS: ElementType[] = ['Morte', 'Sangue', 'Energia', 'Conhecimento', 'Medo'];
-
-const ELEMENT_COLORS: Record<ElementType, string> = {
-  Morte: 'bg-gray-700 text-gray-100',
-  Sangue: 'bg-red-700 text-red-100',
-  Energia: 'bg-blue-600 text-blue-100',
-  Conhecimento: 'bg-amber-600 text-amber-100',
-  Medo: 'bg-purple-700 text-purple-100',
-};
 
 export function CharacterSheet() {
   const { id } = useParams<{ id: string }>();
@@ -80,7 +70,6 @@ export function CharacterSheet() {
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [historyContent, setHistoryContent] = useState('');
-  const [historySummary, setHistorySummary] = useState('');
   const [hasUnsavedHistory, setHasUnsavedHistory] = useState(false);
 
   // Audit logs
@@ -113,7 +102,6 @@ export function CharacterSheet() {
       setCharacter(response.data);
       setNameValue(response.data.name);
       setHistoryContent(response.data.historyFull || '');
-      setHistorySummary(response.data.historySummary || '');
     } catch (error) {
       toast.error('Erro ao carregar personagem');
       navigate('/characters');
@@ -132,6 +120,20 @@ export function CharacterSheet() {
       console.error('Failed to fetch audit logs:', error);
     }
   }, [id, isAdmin, auditPage]);
+
+  // Atualiza o título da aba quando o personagem carrega
+  const updateTab = useTabStore((state) => state.updateTab);
+  const tabs = useTabStore((state) => state.tabs);
+  
+  useEffect(() => {
+    if (character && id) {
+      // Encontra a tab atual pelo path
+      const currentTab = tabs.find((t) => t.path === `/characters/${id}`);
+      if (currentTab && currentTab.title !== character.name) {
+        updateTab(currentTab.id, { title: character.name });
+      }
+    }
+  }, [character, id, tabs, updateTab]);
 
   useEffect(() => {
     fetchCharacter();
@@ -156,7 +158,6 @@ export function CharacterSheet() {
         setSaving(true);
         await characterApi.update(id!, {
           historyFull: historyContent,
-          historySummary,
         });
         setHasUnsavedHistory(false);
         toast.success('História salva');
@@ -172,34 +173,27 @@ export function CharacterSheet() {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [historyContent, historySummary, hasUnsavedHistory, id, canEdit]);
+  }, [historyContent, hasUnsavedHistory, id, canEdit]);
 
   const handleUpdateVital = async (field: 'pv' | 'san' | 'pe', delta: number) => {
     if (!character || !canEditVitals) return;
 
-    const maxField = `${field}Max` as const;
-    const currentField = `${field}Current` as const;
+    const maxField = `${field}Max` as 'pvMax' | 'sanMax' | 'peMax';
+    const currentField = `${field}Current` as 'pvCurrent' | 'sanCurrent' | 'peCurrent';
     const max = character[maxField];
     const current = character[currentField];
     const newValue = Math.max(0, Math.min(max, current + delta));
 
+    // Otimista: atualiza UI imediatamente
+    setCharacter({ ...character, [currentField]: newValue });
+
     try {
-      await characterApi.updateVitals(character.id, field, delta);
-      setCharacter({ ...character, [currentField]: newValue });
+      // Backend espera o valor absoluto, não o delta
+      await characterApi.updateVitals(character.id, { [currentField]: newValue });
     } catch (error) {
+      // Reverte em caso de erro
+      setCharacter({ ...character, [currentField]: current });
       toast.error('Erro ao atualizar vital');
-    }
-  };
-
-  const handleUpdateAttribute = async (attr: string, value: DiceValue) => {
-    if (!character || !canEdit) return;
-
-    try {
-      await characterApi.update(character.id, { [attr]: value });
-      setCharacter({ ...character, [attr]: value });
-      toast.success('Atributo atualizado');
-    } catch (error) {
-      toast.error('Erro ao atualizar atributo');
     }
   };
 
@@ -378,7 +372,6 @@ export function CharacterSheet() {
             setNameValue={setNameValue}
             handleSaveName={handleSaveName}
             handleUpdateVital={handleUpdateVital}
-            handleUpdateAttribute={handleUpdateAttribute}
             handleAddCondition={() => setAddConditionOpen(true)}
             handleRemoveCondition={handleRemoveCondition}
             fileInputRef={fileInputRef}
@@ -392,14 +385,10 @@ export function CharacterSheet() {
           <StoryTab
             character={character}
             canEdit={canEdit}
-            historySummary={historySummary}
+            isAdmin={isAdmin}
             historyContent={historyContent}
             hasUnsavedHistory={hasUnsavedHistory}
             saving={saving}
-            setHistorySummary={(val) => {
-              setHistorySummary(val);
-              setHasUnsavedHistory(true);
-            }}
             setHistoryContent={(val) => {
               setHistoryContent(val);
               setHasUnsavedHistory(true);
@@ -409,30 +398,27 @@ export function CharacterSheet() {
 
         {/* Inventory Tab */}
         <Tabs.Content value="inventory">
-          <InventoryTab
+          <InventoryTabComponent
             character={character}
-            canEdit={canEdit || isOwner}
-            onAddItem={() => setAddItemOpen(true)}
+            isAdmin={isAdmin}
             onRefresh={fetchCharacter}
           />
         </Tabs.Content>
 
         {/* Abilities Tab */}
         <Tabs.Content value="abilities">
-          <AbilitiesTab
+          <AbilitiesTabComponent
             character={character}
-            canEdit={canEdit}
-            onAddAbility={() => setAddAbilityOpen(true)}
+            isAdmin={isAdmin}
             onRefresh={fetchCharacter}
           />
         </Tabs.Content>
 
         {/* Skills Tab */}
         <Tabs.Content value="skills">
-          <SkillsTab
+          <SkillsTabComponent
             character={character}
-            canEdit={canEdit}
-            onAddSkill={() => setAddSkillOpen(true)}
+            isAdmin={isAdmin}
             onRefresh={fetchCharacter}
           />
         </Tabs.Content>
@@ -519,7 +505,6 @@ interface OverviewTabProps {
   setNameValue: (val: string) => void;
   handleSaveName: () => void;
   handleUpdateVital: (field: 'pv' | 'san' | 'pe', delta: number) => void;
-  handleUpdateAttribute: (attr: string, value: DiceValue) => void;
   handleAddCondition: () => void;
   handleRemoveCondition: (condition: string) => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
@@ -537,7 +522,6 @@ function OverviewTab({
   setNameValue,
   handleSaveName,
   handleUpdateVital,
-  handleUpdateAttribute,
   handleAddCondition,
   handleRemoveCondition,
   fileInputRef,
@@ -562,48 +546,63 @@ function OverviewTab({
       {/* Left Column - Token */}
       <div className="lg:col-span-1">
         <div className="bg-surface border border-border rounded-lg p-6">
-          <div className="relative group mx-auto w-48 h-48">
-            <TokenAvatar
-              src={character.tokenImage}
-              name={character.name}
-              size="xl"
-            />
-            {canEdit && (
-              <>
+          <div className="relative group flex items-center justify-center">
+            <div className="relative w-48 rounded-lg overflow-hidden flex items-center justify-center">
+              {character.tokenImage ? (
+                <img
+                  src={getUploadUrl(character.tokenImage) || ''}
+                  alt={character.name}
+                  className="w-full h-auto object-contain"
+                />
+              ) : (
+                <div className="w-48 h-48 bg-background">
+                  <TokenAvatar
+                    src={null}
+                    name={character.name}
+                    size="xl"
+                    className="w-full h-full !rounded-none"
+                  />
+                </div>
+              )}
+              {canEdit && (
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-full"
+                  className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                   <Camera size={32} className="text-white" />
                 </button>
-                <input
-                  ref={fileInputRef as React.RefObject<HTMLInputElement>}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={handleTokenUpload}
-                  className="hidden"
-                />
-              </>
-            )}
+              )}
+            </div>
+            <input
+              ref={fileInputRef as React.RefObject<HTMLInputElement>}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handleTokenUpload}
+              className="hidden"
+            />
           </div>
 
           {/* Name */}
           <div className="mt-4 text-center">
             {editingName ? (
-              <div className="flex items-center justify-center gap-2">
-                <input
-                  type="text"
-                  value={nameValue}
-                  onChange={(e) => setNameValue(e.target.value)}
-                  className="px-2 py-1 bg-background border border-border rounded text-lg font-bold text-foreground text-center focus:outline-none focus:ring-2 focus:ring-accent"
-                  autoFocus
-                />
-                <button onClick={handleSaveName} className="text-success">
-                  <Check size={18} />
-                </button>
-                <button onClick={() => setEditingName(false)} className="text-danger">
-                  <X size={18} />
-                </button>
+              <div className="flex flex-col items-center gap-1">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={nameValue}
+                    onChange={(e) => setNameValue(e.target.value.slice(0, 40))}
+                    maxLength={40}
+                    className="px-2 py-1 bg-background border border-border rounded text-lg font-bold text-foreground text-center focus:outline-none focus:ring-2 focus:ring-accent max-w-[250px]"
+                    autoFocus
+                  />
+                  <button onClick={handleSaveName} className="text-success">
+                    <Check size={18} />
+                  </button>
+                  <button onClick={() => setEditingName(false)} className="text-danger">
+                    <X size={18} />
+                  </button>
+                </div>
+                <span className="text-xs text-muted-foreground">{nameValue.length}/40</span>
               </div>
             ) : (
               <h2
@@ -681,35 +680,150 @@ function OverviewTab({
 
       {/* Right Column - Attributes & Vitals */}
       <div className="lg:col-span-2 space-y-6">
-        {/* Attributes */}
-        <div className="bg-surface border border-border rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-foreground mb-4">Atributos</h3>
-          <div className="grid grid-cols-5 gap-4">
-            {[
-              { key: 'attrForca', label: 'FOR' },
-              { key: 'attrAgilidade', label: 'AGI' },
-              { key: 'attrIntelecto', label: 'INT' },
-              { key: 'attrPresenca', label: 'PRE' },
-              { key: 'attrVigor', label: 'VIG' },
-            ].map((attr) => (
-              <div key={attr.key} className="text-center">
-                <p className="text-sm text-muted-foreground mb-2">{attr.label}</p>
-                <DiceDisplay
-                  value={(character[attr.key as keyof Character] as DiceValue) || 'd6'}
-                />
-                {canEdit && (
-                  <select
-                    value={(character[attr.key as keyof Character] as DiceValue) || 'd6'}
-                    onChange={(e) => handleUpdateAttribute(attr.key, e.target.value as DiceValue)}
-                    className="mt-2 w-full px-2 py-1 bg-background border border-border rounded text-sm text-foreground"
-                  >
-                    {DICE_VALUES.map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                )}
+        {/* Top Row - Attributes + Defesas side by side */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Attributes - Pentagram Layout */}
+          <div className="bg-surface border border-border rounded-lg p-6">
+            <h3 className="text-lg font-semibold text-foreground mb-4 text-center">Atributos</h3>
+            <div className="relative w-full aspect-square max-w-[220px] mx-auto">
+              {/* Pentagram image background */}
+              <img
+                src="/pentagram.png"
+                alt=""
+                className="absolute inset-0 w-full h-full object-contain opacity-70"
+              />
+              
+              {/* Top - Intelecto (ponta superior da estrela) */}
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 text-center">
+                <span 
+                  className="text-2xl font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  {character.attrIntelecto || 1}
+                </span>
+                <p 
+                  className="text-xs font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  INT
+                </p>
               </div>
-            ))}
+              
+              {/* Top Right - Presença (ponta superior direita) */}
+              <div className="absolute top-[36%] right-[9%] text-center">
+                <span 
+                  className="text-2xl font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  {character.attrPresenca || 1}
+                </span>
+                <p 
+                  className="text-xs font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  PRE
+                </p>
+              </div>
+              
+              {/* Top Left - Agilidade (ponta superior esquerda) */}
+              <div className="absolute top-[36%] left-[9%] text-center">
+                <span 
+                  className="text-2xl font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  {character.attrAgilidade || 1}
+                </span>
+                <p 
+                  className="text-xs font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  AGI
+                </p>
+              </div>
+              
+              {/* Bottom Right - Vigor (ponta inferior direita) */}
+              <div className="absolute bottom-0 right-[23%] text-center">
+                <span 
+                  className="text-2xl font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  {character.attrVigor || 1}
+                </span>
+                <p 
+                  className="text-xs font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  VIG
+                </p>
+              </div>
+              
+              {/* Bottom Left - Força (ponta inferior esquerda) */}
+              <div className="absolute bottom-0 left-[23%] text-center">
+                <span 
+                  className="text-2xl font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  {character.attrForca || 1}
+                </span>
+                <p 
+                  className="text-xs font-bold text-white"
+                  style={{ textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' }}
+                >
+                  FOR
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Right side - Defesas, Movimento */}
+          <div className="space-y-4">
+            {/* Defesas & Resistências */}
+            <div className="bg-surface border border-border rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Defesas & Resistências</h3>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="text-center p-2 bg-background rounded-lg">
+                  <p className="text-[10px] text-muted-foreground mb-1">DEFESA</p>
+                  <div className="text-lg font-bold text-foreground">{character.defesa}</div>
+                </div>
+                <div className="text-center p-2 bg-background rounded-lg">
+                  <p className="text-[10px] text-muted-foreground mb-1">ESQUIVA</p>
+                  <div className="text-lg font-bold text-foreground">{character.esquiva ?? '-'}</div>
+                </div>
+                <div className="text-center p-2 bg-background rounded-lg">
+                  <p className="text-[10px] text-muted-foreground mb-1">BLOQUEIO</p>
+                  <div className="text-lg font-bold text-foreground">{character.bloqueio ?? '-'}</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                <div className="text-center p-2 bg-background rounded-lg border-l-2 border-emerald-500">
+                  <p className="text-[10px] text-muted-foreground mb-1">FORT</p>
+                  <div className="text-sm font-bold text-emerald-500">+{character.fortitude}</div>
+                </div>
+                <div className="text-center p-2 bg-background rounded-lg border-l-2 border-yellow-500">
+                  <p className="text-[10px] text-muted-foreground mb-1">REF</p>
+                  <div className="text-sm font-bold text-yellow-500">+{character.reflexos}</div>
+                </div>
+                <div className="text-center p-2 bg-background rounded-lg border-l-2 border-violet-500">
+                  <p className="text-[10px] text-muted-foreground mb-1">VON</p>
+                  <div className="text-sm font-bold text-violet-500">+{character.vontade}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Movimento & Inventário */}
+            <div className="bg-surface border border-border rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Movimento & Capacidade</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="text-center p-2 bg-background rounded-lg">
+                  <p className="text-[10px] text-muted-foreground mb-1">DESLOCAMENTO</p>
+                  <div className="text-lg font-bold text-foreground">{character.deslocamento}m</div>
+                </div>
+                <div className="text-center p-2 bg-background rounded-lg">
+                  <p className="text-[10px] text-muted-foreground mb-1">INVENTÁRIO</p>
+                  <div className="text-lg font-bold text-foreground">{character.espacosInventario}</div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -718,31 +832,31 @@ function OverviewTab({
           <h3 className="text-lg font-semibold text-foreground mb-4">Vitais</h3>
           <div className="space-y-4">
             <VitalBar
-              label="Pontos de Vida"
+              label="PV"
               current={character.pvCurrent}
               max={character.pvMax}
               color="red"
               showNumbers
-              onMinus={canEditVitals ? () => handleUpdateVital('pv', -1) : undefined}
-              onPlus={canEditVitals ? () => handleUpdateVital('pv', 1) : undefined}
+              onMinus={canEditVitals ? (amount) => handleUpdateVital('pv', -amount) : undefined}
+              onPlus={canEditVitals ? (amount) => handleUpdateVital('pv', amount) : undefined}
             />
             <VitalBar
-              label="Sanidade"
+              label="SAN"
               current={character.sanCurrent}
               max={character.sanMax}
               color="blue"
               showNumbers
-              onMinus={canEditVitals ? () => handleUpdateVital('san', -1) : undefined}
-              onPlus={canEditVitals ? () => handleUpdateVital('san', 1) : undefined}
+              onMinus={canEditVitals ? (amount) => handleUpdateVital('san', -amount) : undefined}
+              onPlus={canEditVitals ? (amount) => handleUpdateVital('san', amount) : undefined}
             />
             <VitalBar
-              label="Pontos de Esforço"
+              label="PE"
               current={character.peCurrent}
               max={character.peMax}
               color="purple"
               showNumbers
-              onMinus={canEditVitals ? () => handleUpdateVital('pe', -1) : undefined}
-              onPlus={canEditVitals ? () => handleUpdateVital('pe', 1) : undefined}
+              onMinus={canEditVitals ? (amount) => handleUpdateVital('pe', -amount) : undefined}
+              onPlus={canEditVitals ? (amount) => handleUpdateVital('pe', amount) : undefined}
             />
           </div>
         </div>
@@ -787,405 +901,355 @@ function OverviewTab({
 interface StoryTabProps {
   character: Character;
   canEdit: boolean;
-  historySummary: string;
+  isAdmin: boolean;
   historyContent: string;
   hasUnsavedHistory: boolean;
   saving: boolean;
-  setHistorySummary: (val: string) => void;
   setHistoryContent: (val: string) => void;
+}
+
+// Função para criptografar texto - substitui cada caractere (exceto espaços) por letra aleatória
+// Usa seed baseada na posição para ser determinístico (não mudar a cada render)
+function cipherText(text: string, seed: number = 0): string {
+  // Letras disponíveis na fonte Paranormal (sem X e Y que podem não existir)
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWZ';
+  const lettersLower = 'abcdefghijklmnopqrstuvwz';
+  
+  // Função pseudo-random com seed
+  const seededRandom = (s: number) => {
+    const x = Math.sin(s) * 10000;
+    return x - Math.floor(x);
+  };
+  
+  let result = '';
+  let charIndex = 0;
+  let inTag = false;
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    
+    // Detecta início/fim de tags HTML
+    if (char === '<') {
+      inTag = true;
+      result += char;
+      continue;
+    }
+    if (char === '>') {
+      inTag = false;
+      result += char;
+      continue;
+    }
+    
+    // Dentro de tag HTML, mantém como está
+    if (inTag) {
+      result += char;
+      continue;
+    }
+    
+    // Espaços e quebras de linha são mantidos
+    if (char === ' ' || char === '\n' || char === '\r' || char === '\t') {
+      result += char;
+      charIndex++;
+      continue;
+    }
+    
+    // Qualquer outro caractere (letra, número, símbolo) vira letra aleatória
+    const randomIndex = Math.floor(seededRandom(seed + charIndex) * letters.length);
+    
+    // Alterna entre maiúscula e minúscula baseado no caractere original
+    const isUpper = char === char.toUpperCase() && char !== char.toLowerCase();
+    result += isUpper ? letters[randomIndex] : lettersLower[randomIndex];
+    
+    charIndex++;
+  }
+  
+  return result;
+}
+
+// Componente wrapper para conteúdo com links internos clicáveis
+function RichContent({ 
+  html, 
+  isAdmin, 
+  onReveal 
+}: { 
+  html: string; 
+  isAdmin: boolean; 
+  onReveal?: (newContent: string) => void;
+}) {
+  const { navigateToLink } = useTabNavigation();
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Processar segredos
+  const processedContent = processSecretContent(html, isAdmin, onReveal);
+  
+  // Adicionar handler para links internos
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    
+    const handleLinkClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const link = target.closest('[data-link-type]') as HTMLElement;
+      
+      if (link) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const type = link.getAttribute('data-link-type') as 'character' | 'environment' | 'monster' | 'document';
+        const id = link.getAttribute('data-link-id');
+        const name = link.getAttribute('data-link-name') || 'Item';
+        
+        if (type && id) {
+          // Links em texto sempre abrem em nova aba
+          navigateToLink(type, id, name);
+        }
+      }
+    };
+    
+    container.addEventListener('click', handleLinkClick);
+    return () => container.removeEventListener('click', handleLinkClick);
+  }, [navigateToLink]);
+  
+  return (
+    <div ref={containerRef}>
+      {processedContent}
+    </div>
+  );
+}
+
+// Função auxiliar para encontrar spans secretos com suporte a aninhamento
+function findSecretSpans(html: string): Array<{ fullMatch: string; content: string; start: number; end: number }> {
+  const results: Array<{ fullMatch: string; content: string; start: number; end: number }> = [];
+  const secretOpenRegex = /<span[^>]*data-secret="true"[^>]*>/gi;
+  
+  let match;
+  while ((match = secretOpenRegex.exec(html)) !== null) {
+    const startIndex = match.index;
+    const openTag = match[0];
+    let depth = 1;
+    let i = startIndex + openTag.length;
+    
+    // Encontra o </span> correspondente contando profundidade
+    while (i < html.length && depth > 0) {
+      if (html.substring(i).startsWith('<span')) {
+        // Encontrou abertura de span
+        const endOfTag = html.indexOf('>', i);
+        if (endOfTag !== -1) {
+          depth++;
+          i = endOfTag + 1;
+        } else {
+          i++;
+        }
+      } else if (html.substring(i).startsWith('</span>')) {
+        depth--;
+        if (depth === 0) {
+          // Encontrou o fechamento correto
+          const endIndex = i + 7; // '</span>'.length
+          const fullMatch = html.substring(startIndex, endIndex);
+          const content = html.substring(startIndex + openTag.length, i);
+          results.push({ fullMatch, content, start: startIndex, end: endIndex });
+        }
+        i += 7;
+      } else {
+        i++;
+      }
+    }
+  }
+  
+  return results;
+}
+
+// Função para processar conteúdo secreto
+// Agora usa <span data-secret="true"> gerado pelo TipTap Mark customizado
+function processSecretContent(html: string, isAdmin: boolean, onReveal?: (newContent: string) => void): React.ReactNode {
+  // Preservar parágrafos vazios (quebras de linha) convertendo <p></p> para ter conteúdo
+  let preservedHtml = html.replace(/<p><\/p>/g, '<p><br></p>');
+  
+  // Se não tem segredos, retorna o HTML direto
+  if (!preservedHtml.includes('data-secret="true"')) {
+    return <div dangerouslySetInnerHTML={{ __html: preservedHtml }} />;
+  }
+
+  // Encontra todos os spans secretos com suporte a aninhamento
+  const secretSpans = findSecretSpans(preservedHtml);
+  
+  if (secretSpans.length === 0) {
+    return <div dangerouslySetInnerHTML={{ __html: preservedHtml }} />;
+  }
+
+  if (isAdmin) {
+    // Para admin: substituir o span por versão estilizada com botão
+    const secretMatches: string[] = [];
+    let processedHtml = preservedHtml;
+    let offset = 0;
+    
+    for (const span of secretSpans) {
+      const index = secretMatches.length;
+      secretMatches.push(span.fullMatch);
+      
+      // Cria span estilizado com botão inline
+      const replacement = `<span class="secret-admin-view" style="background:rgba(139,92,246,0.2);border:1px solid rgba(139,92,246,0.5);border-radius:4px;padding:0 4px;display:inline"><span style="color:rgb(167,139,250)">${span.content}</span><button data-reveal-index="${index}" style="margin-left:4px;font-size:10px;background:rgb(139,92,246);color:white;padding:1px 4px;border-radius:3px;border:none;cursor:pointer">Revelar</button></span>`;
+      
+      processedHtml = processedHtml.substring(0, span.start + offset) + replacement + processedHtml.substring(span.end + offset);
+      offset += replacement.length - span.fullMatch.length;
+    }
+
+    // Handler para cliques nos botões revelar
+    const handleClick = (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'BUTTON' && target.dataset.revealIndex !== undefined) {
+        const index = parseInt(target.dataset.revealIndex, 10);
+        const fullMatch = secretMatches[index];
+        if (fullMatch && onReveal) {
+          // Encontra o conteúdo do span original
+          const spanData = findSecretSpans(fullMatch)[0];
+          if (spanData) {
+            const newHtml = html.replace(fullMatch, spanData.content);
+            onReveal(newHtml);
+          }
+        }
+      }
+    };
+
+    return (
+      <div 
+        onClick={handleClick}
+        dangerouslySetInnerHTML={{ __html: processedHtml }} 
+      />
+    );
+  } else {
+    // Para jogadores: criptografar o texto e usar fonte Paranormal
+    // Links internos são completamente removidos (invisíveis)
+    let processedHtml = preservedHtml;
+    let offset = 0;
+    let secretIndex = 0;
+    
+    for (const span of secretSpans) {
+      // Remove TODOS os links internos do conteúdo - extrai só o texto puro
+      let cleanContent = span.content;
+      
+      // Remove links internos recursivamente (pode haver aninhamento)
+      // Substitui <span class="internal-link ...">texto</span> por apenas o texto puro
+      // A classe pode ser "internal-link" ou "internal-link internal-link--type"
+      while (cleanContent.includes('internal-link')) {
+        cleanContent = cleanContent.replace(
+          /<span[^>]*class="[^"]*internal-link[^"]*"[^>]*>([\s\S]*?)<\/span>/gi,
+          '$1'
+        );
+      }
+      
+      // Remove TODAS as tags HTML restantes para obter apenas texto puro
+      const textOnly = cleanContent.replace(/<[^>]*>/g, '');
+      
+      // Criptografa o texto
+      const ciphered = cipherText(textOnly, secretIndex * 1000);
+      secretIndex++;
+      
+      // Cria o span criptografado SEM nenhuma cor especial (texto padrão)
+      const replacement = `<span class="paranormal-cipher" title="Conteúdo oculto" style="font-family:'Paranormal',monospace;letter-spacing:0.05em;user-select:none;display:inline;">${ciphered}</span>`;
+      
+      processedHtml = processedHtml.substring(0, span.start + offset) + replacement + processedHtml.substring(span.end + offset);
+      offset += replacement.length - span.fullMatch.length;
+    }
+    
+    return <div dangerouslySetInnerHTML={{ __html: processedHtml }} />;
+  }
 }
 
 function StoryTab({
   canEdit,
-  historySummary,
+  isAdmin,
   historyContent,
   hasUnsavedHistory,
   saving,
-  setHistorySummary,
   setHistoryContent,
 }: StoryTabProps) {
-  return (
-    <div className="space-y-6">
-      {/* Save indicator */}
-      <div className="flex justify-end">
-        {saving && (
-          <span className="text-sm text-muted-foreground flex items-center gap-2">
-            <Loader2 size={14} className="animate-spin" />
-            Salvando...
-          </span>
-        )}
-        {!saving && hasUnsavedHistory && (
-          <span className="text-sm text-warning">Alterações não salvas</span>
-        )}
-        {!saving && !hasUnsavedHistory && (
-          <span className="text-sm text-success flex items-center gap-1">
-            <Check size={14} />
-            Salvo
-          </span>
-        )}
-      </div>
-
-      {/* Summary */}
-      <div className="bg-surface border border-border rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-foreground mb-4">Resumo</h3>
-        <textarea
-          value={historySummary}
-          onChange={(e) => setHistorySummary(e.target.value)}
-          readOnly={!canEdit}
-          maxLength={500}
-          rows={3}
-          placeholder="Breve resumo da história do personagem..."
-          className={cn(
-            'w-full px-3 py-2 bg-background border border-border rounded-md text-foreground',
-            'placeholder:text-muted-foreground resize-none',
-            !canEdit && 'cursor-default'
-          )}
-        />
-        <p className="text-xs text-muted-foreground mt-1 text-right">
-          {historySummary.length}/500
-        </p>
-      </div>
-
-      {/* Full History */}
-      <div className="bg-surface border border-border rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-foreground mb-4">História Completa</h3>
-        <RichTextEditor
-          content={historyContent}
-          onChange={canEdit ? setHistoryContent : undefined}
-          readOnly={!canEdit}
-          placeholder="Escreva a história completa do personagem..."
-        />
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────
-// Inventory Tab Component
-// ─────────────────────────────────────────
-
-interface InventoryTabProps {
-  character: Character;
-  canEdit: boolean;
-  onAddItem: () => void;
-  onRefresh: () => void;
-}
-
-function InventoryTab({ character, canEdit, onAddItem, onRefresh }: InventoryTabProps) {
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-
-  const handleDeleteItem = async () => {
-    if (!deleteId) return;
-    try {
-      await characterApi.deleteItem(character.id, deleteId);
-      toast.success('Item removido');
-      onRefresh();
-    } catch (error) {
-      toast.error('Erro ao remover item');
-    } finally {
-      setDeleteId(null);
-    }
-  };
-
-  const items = character.inventory || [];
-
-  return (
-    <div className="bg-surface border border-border rounded-lg p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-foreground">Inventário</h3>
-        {canEdit && (
-          <button
-            onClick={onAddItem}
-            className="flex items-center gap-2 px-3 py-1.5 bg-accent text-white rounded-md hover:bg-accent/90 text-sm"
-          >
-            <Plus size={16} />
-            Adicionar Item
-          </button>
-        )}
-      </div>
-
-      {items.length === 0 ? (
-        <p className="text-muted-foreground text-sm py-8 text-center">Inventário vazio</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2 px-3 text-sm font-medium text-muted-foreground">Nome</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-muted-foreground">Categoria</th>
-                <th className="text-center py-2 px-3 text-sm font-medium text-muted-foreground">Qtd</th>
-                <th className="text-left py-2 px-3 text-sm font-medium text-muted-foreground">Descrição</th>
-                {canEdit && <th className="w-20"></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => (
-                <tr key={item.id} className="border-b border-border/50 hover:bg-muted/30">
-                  <td className="py-2 px-3 text-foreground">{item.name}</td>
-                  <td className="py-2 px-3 text-muted-foreground capitalize">{item.category || '-'}</td>
-                  <td className="py-2 px-3 text-center text-foreground">{item.quantity}</td>
-                  <td className="py-2 px-3 text-muted-foreground text-sm">{item.description || '-'}</td>
-                  {canEdit && (
-                    <td className="py-2 px-3">
-                      <button
-                        onClick={() => setDeleteId(item.id)}
-                        className="p-1 text-danger hover:bg-danger/20 rounded"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={deleteId !== null}
-        onOpenChange={(open) => !open && setDeleteId(null)}
-        title="Remover Item"
-        description="Tem certeza que deseja remover este item do inventário?"
-        confirmText="Remover"
-        onConfirm={handleDeleteItem}
-      />
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────
-// Abilities Tab Component
-// ─────────────────────────────────────────
-
-interface AbilitiesTabProps {
-  character: Character;
-  canEdit: boolean;
-  onAddAbility: () => void;
-  onRefresh: () => void;
-}
-
-function AbilitiesTab({ character, canEdit, onAddAbility, onRefresh }: AbilitiesTabProps) {
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-
-  const handleDeleteAbility = async () => {
-    if (!deleteId) return;
-    try {
-      await characterApi.deleteAbility(character.id, deleteId);
-      toast.success('Habilidade removida');
-      onRefresh();
-    } catch (error) {
-      toast.error('Erro ao remover habilidade');
-    } finally {
-      setDeleteId(null);
-    }
-  };
-
-  const abilities = character.abilities || [];
-  const habilidades = abilities.filter((a) => a.type === 'habilidade');
-  const rituais = abilities.filter((a) => a.type === 'ritual');
+  const [viewMode, setViewMode] = useState<'edit' | 'preview'>('edit');
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
-        {canEdit && (
-          <button
-            onClick={onAddAbility}
-            className="flex items-center gap-2 px-3 py-1.5 bg-accent text-white rounded-md hover:bg-accent/90 text-sm"
-          >
-            <Plus size={16} />
-            Adicionar
-          </button>
-        )}
-      </div>
-
-      {/* Habilidades */}
-      <div className="bg-surface border border-border rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-foreground mb-4">Habilidades</h3>
-        {habilidades.length === 0 ? (
-          <p className="text-muted-foreground text-sm">Nenhuma habilidade</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {habilidades.map((ability) => (
-              <div key={ability.id} className="bg-background border border-border rounded-lg p-4">
-                <div className="flex items-start justify-between">
-                  <h4 className="font-medium text-foreground">{ability.name}</h4>
-                  {canEdit && (
-                    <button
-                      onClick={() => setDeleteId(ability.id)}
-                      className="p-1 text-danger hover:bg-danger/20 rounded"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-                {ability.description && (
-                  <p className="text-sm text-muted-foreground mt-2">{ability.description}</p>
+      {/* Header with save indicator and view toggle */}
+      <div className="flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <div className="flex bg-background border border-border rounded-md p-0.5">
+              <button
+                onClick={() => setViewMode('edit')}
+                className={cn(
+                  'px-3 py-1 text-sm rounded transition-colors',
+                  viewMode === 'edit'
+                    ? 'bg-accent text-white'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Rituais */}
-      <div className="bg-surface border border-border rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-foreground mb-4">Rituais</h3>
-        {rituais.length === 0 ? (
-          <p className="text-muted-foreground text-sm">Nenhum ritual</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {rituais.map((ritual) => (
-              <div key={ritual.id} className="bg-background border border-border rounded-lg p-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h4 className="font-medium text-foreground">{ritual.name}</h4>
-                    <div className="flex items-center gap-2 mt-1">
-                      {ritual.element && (
-                        <span className={cn('px-2 py-0.5 rounded text-xs', ELEMENT_COLORS[ritual.element])}>
-                          {ritual.element}
-                        </span>
-                      )}
-                      {ritual.peCost && ritual.peCost > 0 && (
-                        <span className="text-xs text-muted-foreground">{ritual.peCost} PE</span>
-                      )}
-                    </div>
-                  </div>
-                  {canEdit && (
-                    <button
-                      onClick={() => setDeleteId(ritual.id)}
-                      className="p-1 text-danger hover:bg-danger/20 rounded"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-                {ritual.description && (
-                  <p className="text-sm text-muted-foreground mt-2">{ritual.description}</p>
+              >
+                Editar
+              </button>
+              <button
+                onClick={() => setViewMode('preview')}
+                className={cn(
+                  'px-3 py-1 text-sm rounded transition-colors',
+                  viewMode === 'preview'
+                    ? 'bg-accent text-white'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <ConfirmDialog
-        open={deleteId !== null}
-        onOpenChange={(open) => !open && setDeleteId(null)}
-        title="Remover Habilidade"
-        description="Tem certeza que deseja remover esta habilidade?"
-        confirmText="Remover"
-        onConfirm={handleDeleteAbility}
-      />
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────
-// Skills Tab Component
-// ─────────────────────────────────────────
-
-interface SkillsTabProps {
-  character: Character;
-  canEdit: boolean;
-  onAddSkill: () => void;
-  onRefresh: () => void;
-}
-
-function SkillsTab({ character, canEdit, onAddSkill, onRefresh }: SkillsTabProps) {
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-
-  const handleDeleteSkill = async () => {
-    if (!deleteId) return;
-    try {
-      await characterApi.deleteSkill(character.id, deleteId);
-      toast.success('Perícia removida');
-      onRefresh();
-    } catch (error) {
-      toast.error('Erro ao remover perícia');
-    } finally {
-      setDeleteId(null);
-    }
-  };
-
-  const skills = character.skills || [];
-  const groupedSkills = {
-    forca: skills.filter((s) => s.attribute === 'forca'),
-    agilidade: skills.filter((s) => s.attribute === 'agilidade'),
-    intelecto: skills.filter((s) => s.attribute === 'intelecto'),
-    presenca: skills.filter((s) => s.attribute === 'presenca'),
-    vigor: skills.filter((s) => s.attribute === 'vigor'),
-  };
-
-  const attrLabels: Record<string, string> = {
-    forca: 'Força',
-    agilidade: 'Agilidade',
-    intelecto: 'Intelecto',
-    presenca: 'Presença',
-    vigor: 'Vigor',
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-end">
-        {canEdit && (
-          <button
-            onClick={onAddSkill}
-            className="flex items-center gap-2 px-3 py-1.5 bg-accent text-white rounded-md hover:bg-accent/90 text-sm"
-          >
-            <Plus size={16} />
-            Adicionar Perícia
-          </button>
-        )}
-      </div>
-
-      {Object.entries(groupedSkills).map(([attr, attrSkills]) => (
-        <div key={attr} className="bg-surface border border-border rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-foreground mb-4">{attrLabels[attr]}</h3>
-          {attrSkills.length === 0 ? (
-            <p className="text-muted-foreground text-sm">Nenhuma perícia</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {attrSkills.map((skill) => (
-                <div
-                  key={skill.id}
-                  className={cn(
-                    'flex items-center gap-2 px-3 py-1.5 rounded-md border',
-                    skill.trained
-                      ? 'bg-accent/20 border-accent/50 text-accent'
-                      : 'bg-background border-border text-foreground'
-                  )}
-                >
-                  <span>{skill.name}</span>
-                  <span className="text-sm">
-                    {skill.bonus >= 0 ? '+' : ''}{skill.bonus}
-                  </span>
-                  {skill.trained && (
-                    <span className="text-xs bg-accent text-white px-1.5 py-0.5 rounded">T</span>
-                  )}
-                  {canEdit && (
-                    <button
-                      onClick={() => setDeleteId(skill.id)}
-                      className="p-0.5 text-danger hover:bg-danger/20 rounded"
-                    >
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-              ))}
+              >
+                Visualizar
+              </button>
             </div>
           )}
+          {isAdmin && viewMode === 'edit' && (
+            <span className="text-xs text-violet-400 flex items-center gap-1">
+              <span className="w-2 h-2 bg-violet-500 rounded-full"></span>
+              Selecione texto e clique no ícone de olho para marcar segredos
+            </span>
+          )}
         </div>
-      ))}
+        <div>
+          {saving && (
+            <span className="text-sm text-muted-foreground flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin" />
+              Salvando...
+            </span>
+          )}
+          {!saving && hasUnsavedHistory && (
+            <span className="text-sm text-warning">Alterações não salvas</span>
+          )}
+          {!saving && !hasUnsavedHistory && (
+            <span className="text-sm text-success flex items-center gap-1">
+              <Check size={14} />
+              Salvo
+            </span>
+          )}
+        </div>
+      </div>
 
-      <ConfirmDialog
-        open={deleteId !== null}
-        onOpenChange={(open) => !open && setDeleteId(null)}
-        title="Remover Perícia"
-        description="Tem certeza que deseja remover esta perícia?"
-        confirmText="Remover"
-        onConfirm={handleDeleteSkill}
-      />
+      {/* História */}
+      <div className="bg-surface border border-border rounded-lg p-6">
+        <h3 className="text-lg font-semibold text-foreground mb-4">História</h3>
+        
+        {canEdit && viewMode === 'edit' ? (
+          <RichTextEditor
+            content={historyContent}
+            onChange={setHistoryContent}
+            readOnly={false}
+            showSecretButton={isAdmin}
+            showLinkButton={true}
+            placeholder="Escreva a história do personagem..."
+          />
+        ) : (
+          <div className="prose prose-invert prose-sm max-w-none min-h-[150px]">
+            {historyContent ? (
+              <RichContent
+                html={historyContent}
+                isAdmin={isAdmin}
+                onReveal={canEdit ? setHistoryContent : undefined}
+              />
+            ) : (
+              <p className="text-muted-foreground italic">Nenhuma história escrita ainda.</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1267,28 +1331,71 @@ interface AddConditionDialogProps {
 }
 
 function AddConditionDialog({ open, onOpenChange, currentConditions, onAdd }: AddConditionDialogProps) {
-  const availableConditions = CONDITIONS.filter((c) => !currentConditions.includes(c));
+  // Agrupar condições por categoria
+  const categories = ['medo', 'mental', 'paralisia', 'sentidos', 'fadiga', 'geral'] as const;
+  
+  const categoryColors: Record<string, string> = {
+    medo: 'bg-red-600 hover:bg-red-500',
+    mental: 'bg-orange-600 hover:bg-orange-500',
+    paralisia: 'bg-blue-600 hover:bg-blue-500',
+    sentidos: 'bg-yellow-600 hover:bg-yellow-500',
+    fadiga: 'bg-green-600 hover:bg-green-500',
+    geral: 'bg-gray-600 hover:bg-gray-500',
+  };
+
+  const tooltipTextColors: Record<string, string> = {
+    medo: 'text-red-400',
+    mental: 'text-orange-400',
+    paralisia: 'text-blue-400',
+    sentidos: 'text-yellow-400',
+    fadiga: 'text-green-400',
+    geral: 'text-gray-400',
+  };
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-border rounded-lg shadow-xl w-full max-w-md z-50 p-4">
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-border rounded-lg shadow-xl w-full max-w-lg z-50 p-4 max-h-[80vh] overflow-y-auto">
           <Dialog.Title className="text-lg font-semibold text-foreground mb-4">
             Adicionar Condição
           </Dialog.Title>
-          <div className="flex flex-wrap gap-2 max-h-64 overflow-y-auto">
-            {availableConditions.map((condition) => (
-              <button
-                key={condition}
-                onClick={() => onAdd(condition)}
-                className="px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-md text-foreground text-sm transition-colors"
-              >
-                {condition}
-              </button>
-            ))}
+          
+          <div className="space-y-4">
+            {categories.map((category) => {
+              const categoryInfo = CONDITION_CATEGORIES[category];
+              const conditionsInCategory = CONDITIONS_DATA.filter(
+                (c) => c.category === category && !currentConditions.includes(c.name)
+              );
+              
+              if (conditionsInCategory.length === 0) return null;
+              
+              return (
+                <div key={category}>
+                  <h4 className={cn('text-sm font-medium mb-2', categoryInfo.color)}>
+                    {categoryInfo.emoji} {categoryInfo.name}
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                    {conditionsInCategory.map((condition) => (
+                      <Tooltip key={condition.name} content={condition.description} side="bottom" contentClassName={tooltipTextColors[category]}>
+                        <button
+                          onClick={() => onAdd(condition.name)}
+                          className={cn(
+                            'px-3 py-1.5 rounded-md text-white text-sm transition-colors',
+                            categoryColors[category]
+                          )}
+                        >
+                          {condition.name}
+                        </button>
+                      </Tooltip>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          {availableConditions.length === 0 && (
+          
+          {CONDITIONS.every((c) => currentConditions.includes(c)) && (
             <p className="text-muted-foreground text-sm">Todas as condições já foram adicionadas.</p>
           )}
         </Dialog.Content>
@@ -1331,6 +1438,8 @@ function AddItemDialog({ open, onOpenChange, characterId, onSuccess }: AddItemDi
         category: form.category || undefined,
         quantity: form.quantity,
         description: form.description.trim() || undefined,
+        spaces: 1,
+        isEquipped: false,
       });
       toast.success('Item adicionado');
       onSuccess();
@@ -1570,8 +1679,8 @@ function AddSkillDialog({ open, onOpenChange, characterId, existingSkills, onSuc
   const [form, setForm] = useState({
     name: '',
     attribute: 'forca' as CharacterSkill['attribute'],
-    bonus: 0,
-    trained: false,
+    training: 'treinado' as 'destreinado' | 'treinado' | 'veterano' | 'expert',
+    otherBonus: 0,
   });
 
   const existingNames = existingSkills.map((s) => s.name.toLowerCase());
@@ -1591,13 +1700,13 @@ function AddSkillDialog({ open, onOpenChange, characterId, existingSkills, onSuc
       await characterApi.createSkill(characterId, {
         name: form.name.trim(),
         attribute: form.attribute,
-        bonus: form.bonus,
-        trained: form.trained,
+        training: form.training,
+        otherBonus: form.otherBonus,
       });
       toast.success('Perícia adicionada');
       onSuccess();
       onOpenChange(false);
-      setForm({ name: '', attribute: 'forca', bonus: 0, trained: false });
+      setForm({ name: '', attribute: 'forca', training: 'treinado', otherBonus: 0 });
     } catch (error) {
       toast.error('Erro ao adicionar perícia');
     } finally {
@@ -1656,24 +1765,26 @@ function AddSkillDialog({ open, onOpenChange, characterId, existingSkills, onSuc
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Bônus</label>
+                <label className="block text-sm font-medium text-foreground mb-1">Treinamento</label>
+                <select
+                  value={form.training}
+                  onChange={(e) => setForm({ ...form, training: e.target.value as typeof form.training })}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-md text-foreground"
+                >
+                  <option value="destreinado">Destreinado (+0)</option>
+                  <option value="treinado">Treinado (+5)</option>
+                  <option value="veterano">Veterano (+10)</option>
+                  <option value="expert">Expert (+15)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Bônus Extra</label>
                 <input
                   type="number"
-                  value={form.bonus}
-                  onChange={(e) => setForm({ ...form, bonus: parseInt(e.target.value) || 0 })}
+                  value={form.otherBonus}
+                  onChange={(e) => setForm({ ...form, otherBonus: parseInt(e.target.value) || 0 })}
                   className="w-full px-3 py-2 bg-background border border-border rounded-md text-foreground"
                 />
-              </div>
-              <div className="flex items-end">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.trained}
-                    onChange={(e) => setForm({ ...form, trained: e.target.checked })}
-                    className="w-4 h-4 rounded border-border"
-                  />
-                  <span className="text-sm text-foreground">Treinada</span>
-                </label>
               </div>
             </div>
             <div className="flex justify-end gap-3 pt-4 border-t border-border">

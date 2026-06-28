@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks';
+import { useTabStore, type TabType } from '@/stores/tabStore';
 import {
   LayoutDashboard,
   Users,
@@ -21,21 +22,22 @@ interface NavItem {
   icon: React.ReactNode;
   label: string;
   adminOnly?: boolean;
+  tabType: TabType;
 }
 
 const navItems: NavItem[] = [
-  { to: '/', icon: <LayoutDashboard className="w-5 h-5" />, label: 'Dashboard' },
-  { to: '/characters', icon: <Users className="w-5 h-5" />, label: 'Personagens' },
-  { to: '/monsters', icon: <Skull className="w-5 h-5" />, label: 'Bestiário', adminOnly: true },
-  { to: '/environments', icon: <Map className="w-5 h-5" />, label: 'Ambientes' },
-  { to: '/documents', icon: <FileText className="w-5 h-5" />, label: 'Documentos' },
-  { to: '/combat', icon: <Swords className="w-5 h-5" />, label: 'Combate', adminOnly: true },
-  { to: '/sessions', icon: <BookOpen className="w-5 h-5" />, label: 'Sessões', adminOnly: true },
+  { to: '/', icon: <LayoutDashboard className="w-5 h-5" />, label: 'Dashboard', tabType: 'dashboard' },
+  { to: '/characters', icon: <Users className="w-5 h-5" />, label: 'Personagens', tabType: 'characters' },
+  { to: '/monsters', icon: <Skull className="w-5 h-5" />, label: 'Bestiário', adminOnly: true, tabType: 'monsters' },
+  { to: '/environments', icon: <Map className="w-5 h-5" />, label: 'Ambientes', tabType: 'environments' },
+  { to: '/documents', icon: <FileText className="w-5 h-5" />, label: 'Documentos', tabType: 'documents' },
+  { to: '/combat', icon: <Swords className="w-5 h-5" />, label: 'Combate', adminOnly: true, tabType: 'combat' },
+  { to: '/sessions', icon: <BookOpen className="w-5 h-5" />, label: 'Sessões', adminOnly: true, tabType: 'session' },
 ];
 
 const adminItems: NavItem[] = [
-  { to: '/audit', icon: <ScrollText className="w-5 h-5" />, label: 'Log', adminOnly: true },
-  { to: '/users', icon: <UserCog className="w-5 h-5" />, label: 'Usuários', adminOnly: true },
+  { to: '/audit', icon: <ScrollText className="w-5 h-5" />, label: 'Log', adminOnly: true, tabType: 'admin' },
+  { to: '/users', icon: <UserCog className="w-5 h-5" />, label: 'Usuários', adminOnly: true, tabType: 'admin' },
 ];
 
 const STORAGE_KEY = 'nexus-sidebar-collapsed';
@@ -47,6 +49,8 @@ export function Sidebar() {
   });
   const { isAdmin } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
+  const { replaceCurrentTab, openOrFocusTab } = useTabStore();
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(collapsed));
@@ -55,25 +59,46 @@ export function Sidebar() {
   const visibleNavItems = navItems.filter((item) => !item.adminOnly || isAdmin);
   const visibleAdminItems = isAdmin ? adminItems : [];
 
+  const handleNavClick = (item: NavItem, e: React.MouseEvent) => {
+    e.preventDefault();
+    
+    const tabData = {
+      type: item.tabType,
+      title: item.label,
+      path: item.to,
+    };
+    
+    // Ctrl+click abre em nova aba
+    if (e.ctrlKey || e.metaKey) {
+      openOrFocusTab(tabData);
+    } else {
+      // Clique normal substitui a aba atual
+      replaceCurrentTab(tabData);
+    }
+    
+    navigate(item.to);
+  };
+
   const renderNavItem = (item: NavItem) => {
     const isActive = location.pathname === item.to || 
       (item.to !== '/' && location.pathname.startsWith(item.to));
 
     return (
-      <NavLink
+      <a
         key={item.to}
-        to={item.to}
+        href={item.to}
+        onClick={(e) => handleNavClick(item, e)}
         className={cn(
-          'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors',
+          'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors cursor-pointer',
           'hover:bg-surface text-muted-foreground hover:text-foreground',
           isActive && 'bg-accent/10 text-accent hover:bg-accent/20 hover:text-accent',
           collapsed && 'justify-center px-2'
         )}
-        title={collapsed ? item.label : undefined}
+        title={collapsed ? `${item.label} (Ctrl+click = nova aba)` : undefined}
       >
         {item.icon}
         {!collapsed && <span className="text-sm font-medium">{item.label}</span>}
-      </NavLink>
+      </a>
     );
   };
 

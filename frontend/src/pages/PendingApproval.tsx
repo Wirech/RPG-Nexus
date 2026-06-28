@@ -1,15 +1,14 @@
 import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Clock, XCircle, Loader2 } from 'lucide-react';
-import { useSocket, useAuth } from '@/hooks';
+import { useAuth } from '@/hooks';
 
 export function PendingApproval() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user, isPending } = useAuth();
   
-  // Connect to socket to listen for approval/rejection
-  useSocket();
+  // Socket é inicializado globalmente no App.tsx
 
   const rejected = searchParams.get('rejected') === 'true';
   const rejectionReason = searchParams.get('reason');

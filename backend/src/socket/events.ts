@@ -6,6 +6,10 @@ export const SOCKET_EVENTS = {
   ACCESS_NEW_REQUEST: 'access:new_request',
   ACCESS_APPROVED: 'access:approved',
   ACCESS_REJECTED: 'access:rejected',
+  ACCESS_REQUEST_RESOLVED: 'access:request_resolved',
+
+  // Usuário
+  USER_UPDATED: 'user:updated',
 
   // Combate
   COMBAT_UPDATED: 'combat:updated',

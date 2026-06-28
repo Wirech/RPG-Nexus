@@ -15,6 +15,7 @@ import documentRouter from './routes/document.routes';
 import combatRouter from './routes/combat.routes';
 import sessionRouter from './routes/session.routes';
 import auditLogRouter from './routes/auditlog.routes';
+import compendiumRouter from './routes/compendium.routes';
 
 // Garantir que as pastas de upload existam
 const uploadsDir = process.env.UPLOADS_DIR || './uploads';
@@ -30,16 +31,50 @@ uploadFolders.forEach(folder => {
 
 const app = express();
 const httpServer = createServer(app);
+
+// Configuração de CORS para aceitar múltiplas origens
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  process.env.FRONTEND_URL,
+].filter(Boolean) as string[];
+
+// Função para validar origem (aceita também IPs de rede local)
+const corsOrigin = (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+  // Permite requisições sem origin (ex: mobile apps, Postman)
+  if (!origin) {
+    return callback(null, true);
+  }
+  
+  // Permite origens da lista
+  if (allowedOrigins.includes(origin)) {
+    return callback(null, true);
+  }
+  
+  // Permite qualquer IP local (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+  const localIpRegex = /^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/;
+  if (localIpRegex.test(origin)) {
+    return callback(null, true);
+  }
+  
+  // Em desenvolvimento, aceita qualquer origem
+  if (process.env.NODE_ENV !== 'production') {
+    return callback(null, true);
+  }
+  
+  callback(new Error('Not allowed by CORS'));
+};
+
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: corsOrigin,
     credentials: true
   }
 });
 
 // Middlewares globais
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: corsOrigin,
   credentials: true
 }));
 app.use(express.json());
@@ -60,6 +95,7 @@ app.use('/api/v1/documents', documentRouter);
 app.use('/api/v1/combat', combatRouter);
 app.use('/api/v1/sessions', sessionRouter);
 app.use('/api/v1/audit', auditLogRouter);
+app.use('/api/v1/compendium', compendiumRouter);
 
 // Error handling middleware
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

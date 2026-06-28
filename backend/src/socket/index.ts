@@ -27,17 +27,18 @@ export function initSocket(io: Server): void {
           select: { id: true, role: true, status: true },
         });
 
-        if (!user || user.status !== 'active') {
-          socket.emit('error', { message: 'Usuário inválido ou inativo' });
+        if (!user) {
+          socket.emit('error', { message: 'Usuário não encontrado' });
           return;
         }
 
-        // Associa socket ao usuário
+        // Associa socket ao usuário (incluindo pendentes para receber notificações)
         userSockets.set(user.id, socket.id);
         (socket as Socket & { userId?: string }).userId = user.id;
+        console.log(`Socket registrado: userId=${user.id}, socketId=${socket.id}, role=${user.role}, status=${user.status}`);
 
         // Admin entra automaticamente na sala de admins
-        if (user.role === 'admin') {
+        if (user.role === 'admin' && user.status === 'active') {
           socket.join(SOCKET_ROOMS.ADMINS);
           logger.debug(`Admin ${user.id} entrou na sala admins`);
         }
@@ -80,8 +81,12 @@ export function initSocket(io: Server): void {
 
 export function emitToUser(io: Server, userId: string, event: string, data: unknown): void {
   const socketId = userSockets.get(userId);
+  console.log(`emitToUser: userId=${userId}, socketId=${socketId}, event=${event}`);
   if (socketId) {
     io.to(socketId).emit(event, data);
+    console.log(`Evento ${event} emitido para socket ${socketId}`);
+  } else {
+    console.log(`Nenhum socket encontrado para userId ${userId}. Sockets registrados:`, Array.from(userSockets.entries()));
   }
 }
 

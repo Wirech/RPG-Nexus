@@ -6,17 +6,43 @@ import { useCombatStore } from '../stores/combatStore';
 import { SOCKET_EVENTS, type AccessRequest, type CombatEvent, type CombatParticipant } from '../types';
 import toast from 'react-hot-toast';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+// Detecta a URL do Socket dinamicamente baseado no host atual
+function getSocketUrl(): string {
+  const envUrl = import.meta.env.VITE_SOCKET_URL;
+  
+  if (envUrl && !envUrl.includes('localhost')) {
+    if (typeof window !== 'undefined') {
+      const currentHost = window.location.hostname;
+      const envHost = new URL(envUrl).hostname;
+      
+      if (currentHost !== envHost && currentHost !== 'localhost') {
+        return `http://${currentHost}:3001`;
+      }
+    }
+    return envUrl;
+  }
+  
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    return `http://${window.location.hostname}:3001`;
+  }
+  
+  return 'http://localhost:3001';
+}
+
+const SOCKET_URL = getSocketUrl();
 
 export function useSocket() {
   const socketRef = useRef<Socket | null>(null);
   const { token, isAuthenticated, setUser } = useAuthStore();
-  const { addPendingRequest } = useNotificationStore();
+  const { addPendingRequest, removePendingRequest } = useNotificationStore();
   const { updateParticipant, addEvent, setRound } = useCombatStore();
 
   useEffect(() => {
+    console.log('useSocket useEffect - isAuthenticated:', isAuthenticated, 'token:', token ? 'presente' : 'ausente');
+    
     if (!isAuthenticated || !token) {
       // Desconecta se não autenticado
+      console.log('useSocket: não autenticado, ignorando conexão');
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
@@ -24,6 +50,8 @@ export function useSocket() {
       return;
     }
 
+    console.log('useSocket: conectando ao socket em', SOCKET_URL);
+    
     // Conecta ao socket
     const socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
@@ -34,6 +62,7 @@ export function useSocket() {
 
     // Identificação após conexão
     socket.on('connect', () => {
+      console.log('Socket conectado, emitindo AUTH_IDENTIFY');
       socket.emit(SOCKET_EVENTS.AUTH_IDENTIFY, { token });
     });
 
@@ -46,6 +75,13 @@ export function useSocket() {
     socket.on('error', (error: { message: string }) => {
       console.error('Socket error:', error.message);
       toast.error(error.message);
+    });
+
+    // Log de todos os eventos de acesso para debug
+    socket.onAny((event, ...args) => {
+      if (event.startsWith('access:')) {
+        console.log('Evento recebido:', event, args);
+      }
     });
 
     // ─────────────────────────────────────────
@@ -63,9 +99,20 @@ export function useSocket() {
 
     // Acesso aprovado
     socket.on(SOCKET_EVENTS.ACCESS_APPROVED, (data: { user: { id: string; role: string } }) => {
-      setUser({ ...useAuthStore.getState().user!, role: data.user.role as 'admin' | 'player' | 'spectator' | 'pending' });
+      console.log('ACCESS_APPROVED recebido:', data);
+      const currentUser = useAuthStore.getState().user;
+      if (currentUser) {
+        setUser({ 
+          ...currentUser, 
+          role: data.user.role as 'admin' | 'player' | 'spectator' | 'pending',
+          status: 'active'
+        });
+      }
       toast.success('Seu acesso foi aprovado!');
-      window.location.href = '/';
+      // Usa setTimeout para garantir que o state foi atualizado
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 500);
     });
 
     // Acesso rejeitado
@@ -74,6 +121,30 @@ export function useSocket() {
       toast.error(message);
       // Redireciona para página de pending com mensagem
       window.location.href = `/pending?rejected=true&reason=${encodeURIComponent(message)}`;
+    });
+
+    // Solicitação de acesso resolvida (para admins atualizarem notificações)
+    socket.on(SOCKET_EVENTS.ACCESS_REQUEST_RESOLVED, (data: { userId: string; action: string }) => {
+      removePendingRequest(data.userId);
+    });
+
+    // Usuário atualizado (role, status, etc)
+    socket.on(SOCKET_EVENTS.USER_UPDATED, (data: { user: { id: string; username: string; role: string; status: string; linkedCharacterId: string | null } }) => {
+      console.log('USER_UPDATED recebido:', data);
+      const currentUser = useAuthStore.getState().user;
+      if (currentUser && currentUser.id === data.user.id) {
+        setUser({
+          ...currentUser,
+          role: data.user.role as 'admin' | 'player' | 'spectator' | 'pending',
+          status: data.user.status as 'active' | 'pending' | 'blocked',
+          linkedCharacterId: data.user.linkedCharacterId,
+        });
+        toast.success('Suas permissões foram atualizadas!');
+        // Força refresh para atualizar a UI com as novas permissões
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      }
     });
 
     // ─────────────────────────────────────────
@@ -139,7 +210,7 @@ export function useSocket() {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [isAuthenticated, token, setUser, addPendingRequest, updateParticipant, addEvent, setRound]);
+  }, [isAuthenticated, token, setUser, addPendingRequest, removePendingRequest, updateParticipant, addEvent, setRound]);
 
   // Funções para entrar/sair de sala de combate
   const joinCombat = useCallback((combatId: string) => {

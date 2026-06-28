@@ -5,30 +5,53 @@
 export type VitalField = 'pv' | 'san' | 'pe';
 
 export type ConditionType =
+  // Medo
   | 'Abalado'
-  | 'Alquebrado'
   | 'Apavorado'
+  // Mentais
+  | 'Alquebrado'
   | 'Atordoado'
-  | 'Cego'
   | 'Confuso'
-  | 'Debilitado'
-  | 'Desprevenido'
-  | 'Exausto'
+  | 'Esmorecido'
   | 'Fascinado'
-  | 'Fraco'
+  | 'Frustrado'
+  | 'Pasmo'
+  // Paralisia/Movimento
+  | 'Agarrado'
+  | 'Enredado'
   | 'Imóvel'
-  | 'Inconsciente'
   | 'Lento'
-  | 'Morto'
   | 'Paralisado'
+  // Sentidos
+  | 'Cego'
+  | 'Ofuscado'
+  | 'Surdo'
+  // Fadiga
+  | 'Debilitado'
+  | 'Exausto'
+  | 'Fatigado'
+  | 'Fraco'
+  // Estado Geral
+  | 'Asfixiado'
+  | 'Caído'
+  | 'Desprevenido'
+  | 'Doente'
+  | 'Em Chamas'
+  | 'Enjoado'
+  | 'Envenenado'
+  | 'Indefeso'
+  | 'Inconsciente'
+  | 'Morto'
+  | 'Morrendo'
+  | 'Petrificado'
   | 'Pressionado'
   | 'Sangrando'
-  | 'Surdo'
+  | 'Surpreendido'
   | 'Vulnerável';
 
 export type ThreatLevel = 'Moderado' | 'Perigoso' | 'Mortal' | 'Lendário';
 
-export type CharacterRole = 'Agente' | 'Combatente' | 'Especialista' | 'Ocultista';
+export type CharacterRole = 'Combatente' | 'Especialista' | 'Ocultista';
 
 export type UserRole = 'admin' | 'player' | 'spectator' | 'pending';
 
@@ -38,9 +61,14 @@ export type DiceValue = 'd4' | 'd6' | 'd8' | 'd12' | 'd20';
 
 export type ElementType = 'Morte' | 'Sangue' | 'Energia' | 'Conhecimento' | 'Medo';
 
-export type AbilityType = 'habilidade' | 'ritual';
+export type AbilityType = 'habilidade' | 'ritual' | 'origem';
 
-export type ItemCategory = 'arma' | 'proteção' | 'item' | 'consumível';
+export type ItemCategory = 'arma' | 'proteção' | 'escudo' | 'equipamento' | 'consumível' | 'misc';
+
+export type WeaponType = 'melee' | 'ranged' | 'thrown';
+export type WeaponGrip = 'light' | 'one-handed' | 'two-handed';
+export type ProtectionType = 'light' | 'heavy';
+export type SkillTraining = 'destreinado' | 'treinado' | 'veterano' | 'expert';
 
 export type DamageType = 'físico' | 'mental' | 'paranormal';
 
@@ -95,6 +123,8 @@ export const SOCKET_EVENTS = {
   ACCESS_NEW_REQUEST: 'access:new_request',
   ACCESS_APPROVED: 'access:approved',
   ACCESS_REJECTED: 'access:rejected',
+  ACCESS_REQUEST_RESOLVED: 'access:request_resolved',
+  USER_UPDATED: 'user:updated',
   COMBAT_UPDATED: 'combat:updated',
   COMBAT_EVENT: 'combat:event',
   COMBAT_ROUND_CHANGE: 'combat:round_change',
@@ -154,16 +184,30 @@ export interface CharacterGroup {
   description?: string | null;
   color?: string | null;
   order: number;
+  parentId?: string | null;
+  parent?: CharacterGroup;
+  children?: CharacterGroup[];
   characters?: Character[];
-  _count?: { characters: number };
+  memberships?: CharacterGroupMembership[];
+  _count?: { characters: number; memberships: number };
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CharacterGroupMembership {
+  id: string;
+  characterId: string;
+  character?: Character;
+  groupId: string;
+  group?: CharacterGroup;
+  addedAt: string;
 }
 
 export interface Character {
   id: string;
   groupId: string;
   group?: CharacterGroup;
+  groupMemberships?: CharacterGroupMembership[];
   name: string;
   tokenImage?: string | null;
   description?: string | null;
@@ -171,24 +215,58 @@ export interface Character {
   historyFull?: string | null;
   nex?: string | null;
   trilha?: CharacterRole | null;
+  origem?: string | null;
+  // Recursos vitais
   pvCurrent: number;
   pvMax: number;
   sanCurrent: number;
   sanMax: number;
   peCurrent: number;
   peMax: number;
-  attrForca?: DiceValue | null;
-  attrAgilidade?: DiceValue | null;
-  attrIntelecto?: DiceValue | null;
-  attrPresenca?: DiceValue | null;
-  attrVigor?: DiceValue | null;
-  conditions: string[]; // desserializado do JSON
+  // Atributos (1-6)
+  attrForca: number;
+  attrAgilidade: number;
+  attrIntelecto: number;
+  attrPresenca: number;
+  attrVigor: number;
+  // Defesas e Resistências
+  defesa: number;
+  esquiva?: number | null;
+  bloqueio?: number | null;
+  fortitude: number;
+  reflexos: number;
+  vontade: number;
+  // Movimento e Inventário
+  deslocamento: number;
+  espacosInventario: number;
+  // Limite de PE por rodada e Redução de Dano
+  limitePE?: number;
+  reducaoDano?: number;
+  // Status de aprovação
+  isApproved: boolean;
+  approvedAt?: string | null;
+  approvedById?: string | null;
+  createdById?: string | null;
+  // Outros
+  conditions: string[];
   isRevealed: boolean;
   createdAt: string;
   updatedAt: string;
   skills?: CharacterSkill[];
   abilities?: CharacterAbility[];
   inventory?: InventoryItem[];
+  linkedUsers?: UserCharacter[];
+}
+
+export interface UserCharacter {
+  id: string;
+  userId: string;
+  characterId: string;
+  assignedAt: string;
+  user?: {
+    id: string;
+    username: string;
+  };
 }
 
 export interface CharacterSkill {
@@ -196,8 +274,14 @@ export interface CharacterSkill {
   characterId: string;
   name: string;
   attribute: 'forca' | 'agilidade' | 'intelecto' | 'presenca' | 'vigor';
-  bonus: number;
-  trained: boolean;
+  training: SkillTraining;
+  otherBonus: number;
+  // Novos campos
+  isTrained: boolean;
+  hasSpecialization: boolean;
+  specializationName?: string | null;
+  bonusModifier: number;
+  isOfficial: boolean;
 }
 
 export interface CharacterAbility {
@@ -209,6 +293,34 @@ export interface CharacterAbility {
   type: AbilityType;
   element?: ElementType | null;
   isActive: boolean;
+  // Novos campos - link com compêndio
+  compendiumAbilityId?: string | null;
+  compendiumAbility?: AbilityCompendium | null;
+  compendiumRitualId?: string | null;
+  compendiumRitual?: RitualCompendium | null;
+  // Overrides
+  nameOverride?: string | null;
+  descriptionOverride?: string | null;
+  peCostOverride?: number | null;
+  // Tracking de uso
+  currentUses: number;
+  notes?: string | null;
+  addedAt: string;
+  // Campos do Ordem
+  actionType?: string | null;
+  usesPerScene?: number | null;
+  trilha?: string | null;
+  nex?: string | null;
+}
+
+export interface InventoryLocation {
+  id: string;
+  characterId: string;
+  name: string;
+  icon: string;
+  color: string;
+  order: number;
+  _count?: { items: number };
 }
 
 export interface InventoryItem {
@@ -218,7 +330,82 @@ export interface InventoryItem {
   quantity: number;
   description?: string | null;
   category?: ItemCategory | null;
-  weight?: number | null;
+  weight: number;
+  spaces: number;
+  isEquipped: boolean;
+  // Localização
+  locationId?: string | null;
+  inventoryLocation?: InventoryLocation | null;
+  locationCustomName?: string | null;
+  // Campos para ARMAS
+  weaponType?: WeaponType | null;
+  weaponGrip?: WeaponGrip | null;
+  damage?: string | null;
+  damageType?: string | null;
+  criticalMargin?: number | null;
+  criticalMult?: number | null;
+  weaponRange?: number | null;
+  weaponProperties?: string | null; // JSON array
+  wProficiency?: string | null;
+  wAmmunition?: number | null;
+  wAmmunitionType?: string | null;
+  // Campos para PROTEÇÕES
+  protectionType?: ProtectionType | null;
+  defenseBonus?: number | null;
+  damageReduction?: number | null;
+  pPenalty?: number | null;
+  pMaxDex?: number | null;
+  // Campos para CONSUMÍVEIS
+  cEffect?: string | null;
+  cDuration?: string | null;
+  cCharges?: number | null;
+  // Campos para MUNIÇÃO
+  aType?: string | null;
+  aDamageBonus?: string | null;
+  aProperties?: string | null;
+  // Timestamps
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─────────────────────────────────────────
+// COMPÊNDIO
+// ─────────────────────────────────────────
+
+export interface AbilityCompendium {
+  id: string;
+  name: string;
+  description?: string | null;
+  type?: string | null;
+  trilha?: string | null;
+  nex?: string | null;
+  actionType: string;
+  peCost: number;
+  usesPerScene?: number | null;
+  requiresConcentration: boolean;
+  tags: string;
+  source: 'official' | 'custom';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RitualCompendium {
+  id: string;
+  name: string;
+  description?: string | null;
+  effectDescription?: string | null;
+  element: ElementType;
+  circle: number;
+  executionTime: string;
+  range: string;
+  duration: string;
+  resistance?: string | null;
+  peCost: number;
+  nex?: string | null;
+  components: string;
+  source: 'official' | 'custom';
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ─────────────────────────────────────────
@@ -425,16 +612,25 @@ export interface CreateCharacterInput {
   groupId: string;
   name: string;
   description?: string;
+  origem?: string;
   nex?: string;
   trilha?: CharacterRole;
   pvMax?: number;
   sanMax?: number;
   peMax?: number;
-  attrForca?: DiceValue;
-  attrAgilidade?: DiceValue;
-  attrIntelecto?: DiceValue;
-  attrPresenca?: DiceValue;
-  attrVigor?: DiceValue;
+  attrForca?: number;
+  attrAgilidade?: number;
+  attrIntelecto?: number;
+  attrPresenca?: number;
+  attrVigor?: number;
+  defesa?: number;
+  esquiva?: number;
+  bloqueio?: number;
+  fortitude?: number;
+  reflexos?: number;
+  vontade?: number;
+  deslocamento?: number;
+  espacosInventario?: number;
 }
 
 export interface UpdateCharacterInput extends Partial<CreateCharacterInput> {
@@ -445,6 +641,7 @@ export interface UpdateCharacterInput extends Partial<CreateCharacterInput> {
   historySummary?: string;
   historyFull?: string;
   isRevealed?: boolean;
+  isApproved?: boolean;
 }
 
 export interface CreateMonsterInput {

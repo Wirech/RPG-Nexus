@@ -33,9 +33,38 @@ import type {
   CreateSessionNoteInput,
 } from '../types';
 
+// Detecta a URL da API dinamicamente baseado no host atual
+function getApiBaseUrl(): string {
+  // Se tiver uma variável de ambiente definida e não for localhost, usa ela
+  const envUrl = import.meta.env.VITE_API_URL;
+  
+  // Em produção ou se explicitamente configurado, usa a variável de ambiente
+  if (envUrl && !envUrl.includes('localhost')) {
+    // Se a URL do env usa um IP específico mas estamos acessando de outro host,
+    // substitui pelo host atual
+    if (typeof window !== 'undefined') {
+      const currentHost = window.location.hostname;
+      const envHost = new URL(envUrl).hostname;
+      
+      // Se estamos acessando de um IP diferente do configurado, usa o IP atual
+      if (currentHost !== envHost && currentHost !== 'localhost') {
+        return `http://${currentHost}:3001/api/v1`;
+      }
+    }
+    return envUrl;
+  }
+  
+  // Fallback: usa o host atual da página
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    return `http://${window.location.hostname}:3001/api/v1`;
+  }
+  
+  return 'http://localhost:3001/api/v1';
+}
+
 // Instância Axios
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1',
+  baseURL: getApiBaseUrl(),
   headers: {
     'Content-Type': 'application/json',
   },
@@ -92,7 +121,7 @@ export const authApi = {
     api.post<{ user: User; token: string }>('/auth/login', data),
   
   register: (data: RegisterInput) =>
-    api.post<{ user: User; message: string }>('/auth/register', data),
+    api.post<{ user: User; token: string; message: string }>('/auth/register', data),
   
   me: () =>
     api.get<User>('/auth/me'),
@@ -116,10 +145,10 @@ export const userApi = {
     api.get<AccessRequest[]>('/users/pending'),
   
   approve: (userId: string, data: { role: string; linkedCharacterId?: string }) =>
-    api.post(`/users/${userId}/approve`, data),
+    api.post(`/users/approve/${userId}`, data),
   
   reject: (userId: string, reason?: string) =>
-    api.post(`/users/${userId}/reject`, { reason }),
+    api.post(`/users/reject/${userId}`, { reason }),
   
   block: (id: string) =>
     api.post(`/users/${id}/block`),
@@ -143,7 +172,7 @@ export const characterApi = {
   listGroups: () =>
     api.get<CharacterGroup[]>('/characters/groups'),
   
-  createGroup: (data: { name: string; description?: string; color?: string }) =>
+  createGroup: (data: { name: string; description?: string; color?: string; parentId?: string | null }) =>
     api.post<CharacterGroup>('/characters/groups', data),
   
   updateGroup: (id: string, data: Partial<CharacterGroup>) =>
@@ -152,8 +181,21 @@ export const characterApi = {
   deleteGroup: (id: string) =>
     api.delete(`/characters/groups/${id}`),
   
-  reorderGroups: (groupIds: string[]) =>
-    api.post('/characters/groups/reorder', { groupIds }),
+  reorderGroups: (orders: { id: string; order: number; parentId?: string | null }[]) =>
+    api.put('/characters/groups/reorder', { orders }),
+
+  // Memberships (personagem em múltiplos grupos)
+  getCharacterGroups: (characterId: string) =>
+    api.get<(CharacterGroup & { isPrimary: boolean })[]>(`/characters/${characterId}/groups`),
+
+  addCharacterToGroup: (characterId: string, groupId: string) =>
+    api.post(`/characters/${characterId}/groups/${groupId}`),
+
+  removeCharacterFromGroup: (characterId: string, groupId: string) =>
+    api.delete(`/characters/${characterId}/groups/${groupId}`),
+
+  changeCharacterPrimaryGroup: (characterId: string, groupId: string) =>
+    api.put(`/characters/${characterId}/primary-group`, { groupId }),
   
   // Personagens
   list: (params?: { groupId?: string; search?: string }) =>
@@ -180,8 +222,8 @@ export const characterApi = {
   },
   
   // Vitais
-  updateVitals: (id: string, field: 'pv' | 'san' | 'pe', value: number) =>
-    api.patch<Character>(`/characters/${id}/vitals`, { field, value }),
+  updateVitals: (id: string, data: { pvCurrent?: number; pvMax?: number; sanCurrent?: number; sanMax?: number; peCurrent?: number; peMax?: number }) =>
+    api.patch<Character>(`/characters/${id}/vitals`, data),
   
   // Condições
   updateConditions: (id: string, conditions: string[]) =>
@@ -191,7 +233,7 @@ export const characterApi = {
   listSkills: (characterId: string) =>
     api.get<CharacterSkill[]>(`/characters/${characterId}/skills`),
   
-  createSkill: (characterId: string, data: Omit<CharacterSkill, 'id' | 'characterId'>) =>
+  createSkill: (characterId: string, data: Partial<Omit<CharacterSkill, 'id' | 'characterId'>> & { name: string; attribute: string }) =>
     api.post<CharacterSkill>(`/characters/${characterId}/skills`, data),
   
   updateSkill: (characterId: string, skillId: string, data: Partial<CharacterSkill>) =>
@@ -204,7 +246,7 @@ export const characterApi = {
   listAbilities: (characterId: string) =>
     api.get<CharacterAbility[]>(`/characters/${characterId}/abilities`),
   
-  createAbility: (characterId: string, data: Omit<CharacterAbility, 'id' | 'characterId'>) =>
+  createAbility: (characterId: string, data: Partial<Omit<CharacterAbility, 'id' | 'characterId' | 'addedAt'>> & { name: string }) =>
     api.post<CharacterAbility>(`/characters/${characterId}/abilities`, data),
   
   updateAbility: (characterId: string, abilityId: string, data: Partial<CharacterAbility>) =>
@@ -217,7 +259,7 @@ export const characterApi = {
   listInventory: (characterId: string) =>
     api.get<InventoryItem[]>(`/characters/${characterId}/inventory`),
   
-  createItem: (characterId: string, data: Omit<InventoryItem, 'id' | 'characterId'>) =>
+  createItem: (characterId: string, data: Partial<Omit<InventoryItem, 'id' | 'characterId' | 'createdAt' | 'updatedAt'>> & { name: string }) =>
     api.post<InventoryItem>(`/characters/${characterId}/inventory`, data),
   
   updateItem: (characterId: string, itemId: string, data: Partial<InventoryItem>) =>

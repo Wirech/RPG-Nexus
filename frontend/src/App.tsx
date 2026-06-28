@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { Layout } from '@/components/layout';
+import { useSocket } from '@/hooks';
 import {
   Login,
   AccessRequest,
@@ -23,6 +24,12 @@ import {
 } from '@/pages';
 import { useAuth } from '@/hooks';
 import type { UserRole } from '@/types';
+
+// Componente que inicializa o socket globalmente
+function SocketInitializer() {
+  useSocket();
+  return null;
+}
 
 // Protected route component
 interface ProtectedRouteProps {
@@ -65,6 +72,9 @@ function NotFound() {
 export default function App() {
   return (
     <BrowserRouter>
+      {/* Socket global - conecta automaticamente quando autenticado */}
+      <SocketInitializer />
+      
       {/* Toast notifications */}
       <Toaster
         position="top-right"

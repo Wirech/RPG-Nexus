@@ -1,8 +1,50 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
+// Detecta a URL base para uploads dinamicamente
+function getUploadsBaseUrl(): string {
+  const envUrl = import.meta.env.VITE_API_URL;
+  
+  if (envUrl && !envUrl.includes('localhost')) {
+    if (typeof window !== 'undefined') {
+      const currentHost = window.location.hostname;
+      try {
+        const envHost = new URL(envUrl).hostname;
+        if (currentHost !== envHost && currentHost !== 'localhost') {
+          return `http://${currentHost}:3001`;
+        }
+      } catch {
+        // Se falhar ao parsear a URL, usa o host atual
+      }
+    }
+    return envUrl.replace('/api/v1', '');
+  }
+  
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    return `http://${window.location.hostname}:3001`;
+  }
+  
+  return 'http://localhost:3001';
+}
+
+const UPLOADS_BASE_URL = getUploadsBaseUrl();
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+
+/**
+ * Constrói a URL completa para um arquivo de upload
+ * @param path Caminho relativo do arquivo (ex: "tokens/abc123.png")
+ * @returns URL completa ou null se path for vazio
+ */
+export function getUploadUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  // Se já for uma URL completa, retorna como está
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+  return `${UPLOADS_BASE_URL}/uploads/${path}`;
 }
 
 export function formatDate(date: Date | string): string {

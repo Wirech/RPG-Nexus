@@ -9,23 +9,11 @@ import {
   X,
 } from 'lucide-react';
 import { combatApi } from '@/services/api';
-import { VitalBar, TokenAvatar, ConditionBadge } from '@/components/shared';
+import { VitalBar, TokenAvatar, ConditionBadge, Tooltip } from '@/components/shared';
+import { CONDITIONS_DATA, CONDITION_CATEGORIES } from '@/data/conditions';
 import { cn } from '@/lib/utils';
 import type { CombatParticipant, ConditionType } from '@/types';
 import toast from 'react-hot-toast';
-
-const ALL_CONDITIONS: ConditionType[] = [
-  'Sangrando',
-  'Abalado',
-  'Atordoado',
-  'Cego',
-  'Surdo',
-  'Exausto',
-  'Apavorado',
-  'Paralisado',
-  'Inconsciente',
-  'Morto',
-];
 
 interface CombatParticipantCardProps {
   participant: CombatParticipant;
@@ -357,16 +345,42 @@ export function CombatParticipantCard({
                   className="fixed inset-0 z-10"
                   onClick={() => setAddConditionOpen(false)}
                 />
-                <div className="absolute top-full left-0 mt-1 bg-surface border border-border rounded-md shadow-lg z-20 py-1 min-w-[140px]">
-                  {ALL_CONDITIONS.filter((c) => !conditions.includes(c)).map((condition) => (
-                    <button
-                      key={condition}
-                      onClick={() => handleAddCondition(condition)}
-                      className="w-full px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted transition-colors"
-                    >
-                      {condition}
-                    </button>
-                  ))}
+                <div className="absolute top-full left-0 mt-1 bg-surface border border-border rounded-md shadow-lg z-20 py-2 min-w-[200px] max-h-80 overflow-y-auto">
+                  {(['medo', 'mental', 'paralisia', 'sentidos', 'fadiga', 'geral'] as const).map((category) => {
+                    const categoryInfo = CONDITION_CATEGORIES[category];
+                    const conditionsInCategory = CONDITIONS_DATA.filter(
+                      (c) => c.category === category && !conditions.includes(c.name)
+                    );
+                    
+                    const tooltipTextColors: Record<string, string> = {
+                      medo: 'text-red-400',
+                      mental: 'text-orange-400',
+                      paralisia: 'text-blue-400',
+                      sentidos: 'text-yellow-400',
+                      fadiga: 'text-green-400',
+                      geral: 'text-gray-400',
+                    };
+                    
+                    if (conditionsInCategory.length === 0) return null;
+                    
+                    return (
+                      <div key={category} className="mb-2 last:mb-0">
+                        <p className={cn('px-3 py-1 text-xs font-medium', categoryInfo.color)}>
+                          {categoryInfo.emoji} {categoryInfo.name}
+                        </p>
+                        {conditionsInCategory.map((condition) => (
+                          <Tooltip key={condition.name} content={condition.description} side="right" contentClassName={tooltipTextColors[category]}>
+                            <button
+                              onClick={() => handleAddCondition(condition.name)}
+                              className="w-full px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted transition-colors"
+                            >
+                              {condition.name}
+                            </button>
+                          </Tooltip>
+                        ))}
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             )}

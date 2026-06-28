@@ -3,7 +3,7 @@ import prisma from '../prisma/client';
 import { logger } from '../utils/logger';
 import { createAuditLog } from '../utils/auditLogger';
 import { io } from '../app';
-import { emitToUser, SOCKET_EVENTS } from '../socket';
+import { emitToUser, emitToAdmins, SOCKET_EVENTS } from '../socket';
 
 export class UserController {
   // GET / - Lista todos os usuários
@@ -15,9 +15,8 @@ export class UserController {
           username: true,
           role: true,
           status: true,
-          linkedCharacterId: true,
-          linkedCharacter: {
-            select: { id: true, name: true },
+          linkedCharacters: {
+            include: { character: { select: { id: true, name: true } } },
           },
           createdAt: true,
           approvedAt: true,
@@ -25,7 +24,14 @@ export class UserController {
         orderBy: { createdAt: 'desc' },
       });
 
-      res.json(users);
+      // Transforma para compatibilidade com frontend
+      const usersWithLinked = users.map(u => ({
+        ...u,
+        linkedCharacterIds: u.linkedCharacters.map(lc => lc.characterId),
+        linkedCharacterNames: u.linkedCharacters.map(lc => lc.character.name),
+      }));
+
+      res.json(usersWithLinked);
     } catch (error) {
       logger.error('Erro ao listar usuários:', error);
       res.status(500).json({
@@ -102,7 +108,6 @@ export class UserController {
         data: {
           role,
           status: 'active',
-          linkedCharacterId: linkedCharacterId || null,
           approvedAt: new Date(),
           approvedById: req.user!.id,
           accessRequest: {
@@ -118,14 +123,30 @@ export class UserController {
           username: true,
           role: true,
           status: true,
-          linkedCharacterId: true,
         },
       });
 
+      // Se tiver linkedCharacterId, cria a relação UserCharacter
+      if (linkedCharacterId) {
+        await prisma.userCharacter.upsert({
+          where: {
+            userId_characterId: { userId: id, characterId: linkedCharacterId },
+          },
+          create: { userId: id, characterId: linkedCharacterId },
+          update: {},
+        });
+      }
+
       // Emite evento para o usuário aprovado
+      console.log('Emitindo ACCESS_APPROVED para userId:', id);
       emitToUser(io, id, SOCKET_EVENTS.ACCESS_APPROVED, {
+        user: { id, role: updatedUser.role },
+      });
+
+      // Emite evento para os admins atualizarem suas notificações
+      emitToAdmins(io, SOCKET_EVENTS.ACCESS_REQUEST_RESOLVED, {
         userId: id,
-        role: updatedUser.role,
+        action: 'approved',
       });
 
       // Audit log
@@ -140,7 +161,7 @@ export class UserController {
 
       logger.info(`Usuário aprovado: ${user.username} como ${role}`);
 
-      res.json(updatedUser);
+      res.json({ ...updatedUser, linkedCharacterIds: linkedCharacterId ? [linkedCharacterId] : [] });
     } catch (error) {
       logger.error('Erro ao aprovar usuário:', error);
       res.status(500).json({
@@ -198,6 +219,12 @@ export class UserController {
         reason,
       });
 
+      // Emite evento para os admins atualizarem suas notificações
+      emitToAdmins(io, SOCKET_EVENTS.ACCESS_REQUEST_RESOLVED, {
+        userId: id,
+        action: 'rejected',
+      });
+
       logger.info(`Usuário rejeitado: ${user.username}`);
 
       res.json({ message: 'Solicitação rejeitada' });
@@ -217,7 +244,10 @@ export class UserController {
       const id = req.params.id as string;
       const { role, linkedCharacterId, status } = req.body;
 
-      const user = await prisma.user.findUnique({ where: { id } });
+      const user = await prisma.user.findUnique({
+        where: { id },
+        include: { linkedCharacters: true },
+      });
 
       if (!user) {
         res.status(404).json({
@@ -230,7 +260,6 @@ export class UserController {
 
       const updateData: Record<string, unknown> = {};
       if (role !== undefined) updateData.role = role;
-      if (linkedCharacterId !== undefined) updateData.linkedCharacterId = linkedCharacterId;
       if (status !== undefined) updateData.status = status;
 
       const updatedUser = await prisma.user.update({
@@ -241,7 +270,28 @@ export class UserController {
           username: true,
           role: true,
           status: true,
-          linkedCharacterId: true,
+          linkedCharacters: {
+            select: { characterId: true },
+          },
+        },
+      });
+
+      // Atualiza linkedCharacter se fornecido
+      if (linkedCharacterId !== undefined) {
+        // Remove todas as vinculações atuais e adiciona a nova
+        await prisma.userCharacter.deleteMany({ where: { userId: id } });
+        if (linkedCharacterId) {
+          await prisma.userCharacter.create({
+            data: { userId: id, characterId: linkedCharacterId },
+          });
+        }
+      }
+
+      // Notifica o usuário sobre a atualização
+      emitToUser(io, id, SOCKET_EVENTS.USER_UPDATED, {
+        user: {
+          ...updatedUser,
+          linkedCharacterIds: updatedUser.linkedCharacters.map(lc => lc.characterId),
         },
       });
 
@@ -251,11 +301,14 @@ export class UserController {
         entityId: id,
         entityName: user.username,
         action: 'update',
-        oldValue: JSON.stringify({ role: user.role, linkedCharacterId: user.linkedCharacterId }),
+        oldValue: JSON.stringify({ role: user.role, linkedCharacterIds: user.linkedCharacters.map(lc => lc.characterId) }),
         newValue: JSON.stringify(updateData),
       });
 
-      res.json(updatedUser);
+      res.json({
+        ...updatedUser,
+        linkedCharacterIds: updatedUser.linkedCharacters.map(lc => lc.characterId),
+      });
     } catch (error) {
       logger.error('Erro ao atualizar usuário:', error);
       res.status(500).json({

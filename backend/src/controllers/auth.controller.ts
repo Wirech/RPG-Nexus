@@ -64,10 +64,20 @@ export class AuthController {
         requestedAt: user.accessRequest?.requestedAt,
       });
 
+      // Gera token para o usuário pendente poder se conectar ao socket
+      const token = signToken({ id: user.id, username: user.username, role: user.role });
+
       logger.info(`Novo registro: ${username}`);
 
       res.status(201).json({
         message: 'Solicitação enviada. Aguarde aprovação do Mestre.',
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+          status: user.status,
+        },
       });
     } catch (error) {
       logger.error('Erro no registro:', error);
@@ -93,7 +103,9 @@ export class AuthController {
           passwordHash: true,
           role: true,
           status: true,
-          linkedCharacterId: true,
+          linkedCharacters: {
+            include: { character: { select: { id: true, name: true } } }
+          },
         },
       });
 
@@ -152,7 +164,7 @@ export class AuthController {
           username: user.username,
           role: user.role,
           status: user.status,
-          linkedCharacterId: user.linkedCharacterId,
+          linkedCharacterIds: user.linkedCharacters.map(lc => lc.characterId),
         },
       });
     } catch (error) {
@@ -175,7 +187,9 @@ export class AuthController {
           username: true,
           role: true,
           status: true,
-          linkedCharacterId: true,
+          linkedCharacters: {
+            include: { character: { select: { id: true, name: true } } }
+          },
           createdAt: true,
           approvedAt: true,
         },
@@ -190,7 +204,10 @@ export class AuthController {
         return;
       }
 
-      res.json(user);
+      res.json({
+        ...user,
+        linkedCharacterIds: user.linkedCharacters.map(lc => lc.characterId),
+      });
     } catch (error) {
       logger.error('Erro ao buscar usuário:', error);
       res.status(500).json({

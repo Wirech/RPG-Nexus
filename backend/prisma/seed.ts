@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { HABILIDADES_SEED, RITUAIS_SEED } from '../src/utils/skillsData';
 
 const prisma = new PrismaClient();
 
@@ -70,6 +71,59 @@ async function main() {
       console.log(`✅ Grupo criado: ${groupData.name}`);
     }
   }
+
+  // ─────────────────────────────────────────
+  // SEED DO COMPÊNDIO DE HABILIDADES
+  // ─────────────────────────────────────────
+  console.log('📚 Populando compêndio de habilidades...');
+  
+  for (const hab of HABILIDADES_SEED) {
+    await prisma.abilityCompendium.upsert({
+      where: { id: `ability-${hab.name.toLowerCase().replace(/\s+/g, '-')}` },
+      update: {},
+      create: {
+        id: `ability-${hab.name.toLowerCase().replace(/\s+/g, '-')}`,
+        name: hab.name,
+        description: hab.description,
+        trilha: hab.trilha,
+        nex: hab.nex,
+        actionType: hab.actionType,
+        peCost: hab.peCost,
+        usesPerScene: hab.usesPerScene || null,
+        source: 'official',
+      },
+    });
+  }
+  console.log(`✅ ${HABILIDADES_SEED.length} habilidades do compêndio criadas/atualizadas`);
+
+  // ─────────────────────────────────────────
+  // SEED DO COMPÊNDIO DE RITUAIS
+  // ─────────────────────────────────────────
+  console.log('📚 Populando compêndio de rituais...');
+  
+  for (const rit of RITUAIS_SEED) {
+    await prisma.ritualCompendium.upsert({
+      where: { id: `ritual-${rit.name.toLowerCase().replace(/\s+/g, '-')}` },
+      update: {},
+      create: {
+        id: `ritual-${rit.name.toLowerCase().replace(/\s+/g, '-')}`,
+        name: rit.name,
+        description: rit.description,
+        effectDescription: rit.effectDescription,
+        element: rit.element,
+        circle: rit.circle,
+        executionTime: rit.executionTime,
+        range: rit.range,
+        duration: rit.duration,
+        resistance: rit.resistance || 'nenhuma',
+        peCost: rit.peCost,
+        nex: rit.nex,
+        components: rit.components,
+        source: 'official',
+      },
+    });
+  }
+  console.log(`✅ ${RITUAIS_SEED.length} rituais do compêndio criados/atualizados`);
 
   console.log('🎉 Seed concluído com sucesso!');
 }

@@ -5,6 +5,20 @@ import { createAuditLog } from '../utils/auditLogger';
 import { io } from '../app';
 import { emitToCombat, SOCKET_EVENTS } from '../socket';
 
+// Helper para verificar se usuário é dono de um personagem
+async function isCharacterOwner(userId: string, characterId: string): Promise<boolean> {
+  const userCharacter = await prisma.userCharacter.findFirst({
+    where: { userId, characterId },
+  });
+  if (userCharacter) return true;
+
+  const character = await prisma.character.findUnique({
+    where: { id: characterId },
+    select: { createdById: true },
+  });
+  return character?.createdById === userId;
+}
+
 interface ParticipantInput {
   entityType: 'character' | 'monster';
   entityId: string;
@@ -334,12 +348,8 @@ export class CombatController {
           return;
         }
 
-        const user = await prisma.user.findUnique({
-          where: { id: req.user!.id },
-          select: { linkedCharacterId: true },
-        });
-
-        if (user?.linkedCharacterId !== participant.characterId) {
+        const isOwner = participant.characterId ? await isCharacterOwner(req.user!.id, participant.characterId) : false;
+        if (!isOwner) {
           res.status(403).json({
             error: true,
             message: 'Você só pode editar seu próprio personagem',

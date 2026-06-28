@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, ArrowLeft } from 'lucide-react';
 import { authApi } from '@/services/api';
+import { useAuthStore } from '@/stores/authStore';
 import toast from 'react-hot-toast';
 
 export function AccessRequest() {
   const navigate = useNavigate();
+  const login = useAuthStore((state) => state.login);
   
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -33,7 +35,13 @@ export function AccessRequest() {
     setLoading(true);
 
     try {
-      await authApi.register({ username, password });
+      const response = await authApi.register({ username, password });
+      
+      // Salva o token para poder conectar ao socket
+      if (response.data.token && response.data.user) {
+        login(response.data.user, response.data.token);
+      }
+      
       toast.success('Solicitação enviada! Aguarde aprovação do Mestre.');
       navigate('/pending');
     } catch (err: unknown) {

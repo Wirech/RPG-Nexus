@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { TabBar } from './TabBar';
 import { SearchModal } from './SearchModal';
 import { DiceRoller } from '@/components/shared';
 import { useSocket } from '@/hooks';
@@ -44,6 +45,9 @@ export function Layout() {
       >
         {/* Top bar */}
         <TopBar />
+
+        {/* Tab bar */}
+        <TabBar />
 
         {/* Page content */}
         <main className="p-6">

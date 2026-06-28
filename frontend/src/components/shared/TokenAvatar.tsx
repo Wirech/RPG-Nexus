@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils';
+import { cn, getUploadUrl } from '@/lib/utils';
 
 interface TokenAvatarProps {
   src?: string | null;
@@ -6,6 +6,8 @@ interface TokenAvatarProps {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
   onClick?: () => void;
+  /** Position of image within container (default: center) */
+  objectPosition?: 'center' | 'top';
 }
 
 // Generate a consistent color from a string
@@ -45,11 +47,13 @@ export function TokenAvatar({
   size = 'md',
   className,
   onClick,
+  objectPosition = 'center',
 }: TokenAvatarProps) {
   const initials = getInitials(name);
   const bgColor = stringToColor(name);
+  const imageUrl = getUploadUrl(src);
 
-  if (src) {
+  if (imageUrl) {
     return (
       <div
         onClick={onClick}
@@ -61,9 +65,12 @@ export function TokenAvatar({
         )}
       >
         <img
-          src={src}
+          src={imageUrl}
           alt={name}
-          className="w-full h-full object-cover"
+          className={cn(
+            'w-full h-full object-cover',
+            objectPosition === 'top' && 'object-top'
+          )}
           onError={(e) => {
             // Fallback to initials on error
             const target = e.target as HTMLImageElement;

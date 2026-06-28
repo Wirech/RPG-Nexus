@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Fonte Paranormal para censura de segredos */
+@font-face {
+  font-family: 'Paranormal';
+  src: url('/fonts/AFonteParanormal-Regular.woff2') format('woff2'),
+       url('/fonts/AFonteParanormal-Regular.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --background: #0f0f13;
   --surface: #1a1a24;
@@ -12,6 +22,62 @@
   --success: #16a34a;
   --text: #e2e8f0;
   --muted: #64748b;
+}
+
+/* Estilo para texto censurado com fonte paranormal */
+.paranormal-cipher {
+  font-family: 'Paranormal', monospace;
+  letter-spacing: 0.05em;
+  user-select: none;
+}
+
+/* Estilos para links internos - cores padrão por tipo */
+/* Cor é herdada do pai se houver, senão usa cor padrão do tipo */
+.internal-link {
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Quando o link está dentro de um elemento com cor customizada, herdar */
+/* Especificidade maior para sobrescrever as cores padrão */
+[style*="color"] .internal-link,
+[style*="color"] .internal-link--character,
+[style*="color"] .internal-link--environment,
+[style*="color"] .internal-link--monster,
+[style*="color"] .internal-link--document {
+  color: inherit !important;
+}
+
+/* Cores padrão para links (aplicadas apenas quando não há cor herdada) */
+.internal-link--character {
+  color: #3b82f6; /* Azul */
+}
+
+.internal-link--environment {
+  color: #22c55e; /* Verde */
+}
+
+.internal-link--monster {
+  color: #ef4444; /* Vermelho */
+}
+
+.internal-link--document {
+  color: #f59e0b; /* Âmbar */
+}
+
+/* Preservar quebras de linha na preview de história */
+.prose p:empty,
+.prose p:has(br:only-child) {
+  min-height: 1.5em;
+}
+
+.prose p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.prose p + p {
+  margin-top: 1em;
 }
 
 * {

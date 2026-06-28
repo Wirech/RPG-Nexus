@@ -8,8 +8,8 @@ interface VitalBarProps {
   max: number;
   color?: 'red' | 'blue' | 'purple' | 'auto';
   showNumbers?: boolean;
-  onMinus?: () => void;
-  onPlus?: () => void;
+  onMinus?: (amount: number) => void;
+  onPlus?: (amount: number) => void;
   onEdit?: (value: number) => void;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
@@ -30,6 +30,7 @@ export function VitalBar({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(current.toString());
   const [flash, setFlash] = useState(false);
+  const [changeAmount, setChangeAmount] = useState(1);
   const inputRef = useRef<HTMLInputElement>(null);
   const prevCurrentRef = useRef(current);
 
@@ -105,12 +106,25 @@ export function VitalBar({
       {/* Minus button */}
       {onMinus && (
         <button
-          onClick={onMinus}
+          onClick={() => onMinus(changeAmount)}
           className="p-1 rounded hover:bg-surface text-muted-foreground hover:text-foreground transition-colors"
           aria-label={`Diminuir ${label}`}
         >
           <Minus className="w-3 h-3" />
         </button>
+      )}
+
+      {/* Change amount input */}
+      {(onMinus || onPlus) && (
+        <input
+          type="number"
+          min="1"
+          max="999"
+          value={changeAmount}
+          onChange={(e) => setChangeAmount(Math.max(1, parseInt(e.target.value) || 1))}
+          className="w-10 px-1 py-0.5 text-xs text-center bg-background border border-border rounded text-foreground"
+          title="Quantidade a modificar"
+        />
       )}
 
       {/* Progress bar container */}
@@ -164,7 +178,7 @@ export function VitalBar({
       {/* Plus button */}
       {onPlus && (
         <button
-          onClick={onPlus}
+          onClick={() => onPlus(changeAmount)}
           className="p-1 rounded hover:bg-surface text-muted-foreground hover:text-foreground transition-colors"
           aria-label={`Aumentar ${label}`}
         >

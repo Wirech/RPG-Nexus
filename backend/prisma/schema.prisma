@@ -19,8 +19,6 @@ model User {
   passwordHash       String
   role               String    @default("pending") // admin | player | spectator | pending
   status             String    @default("pending") // pending | active | blocked
-  linkedCharacterId  String?
-  linkedCharacter    Character? @relation(fields: [linkedCharacterId], references: [id])
   createdAt          DateTime  @default(now())
   approvedAt         DateTime?
   approvedById       String?
@@ -29,6 +27,9 @@ model User {
   auditLogs          AuditLog[]
   grantedPermissions ResourcePermission[] @relation("GrantedBy")
   userPermissions    ResourcePermission[] @relation("UserPermissions")
+  linkedCharacters   UserCharacter[]      // Personagens vinculados (N:N)
+  createdCharacters  Character[]          @relation("CreatedBy")
+  approvedCharacters Character[]          @relation("ApprovedBy")
 }
 
 model AccessRequest {
@@ -66,9 +67,46 @@ model CharacterGroup {
   description String?
   color       String?     // cor hex para identificação visual
   order       Int         @default(0)
+  
+  // Hierarquia de grupos (auto-referência)
+  parentId    String?
+  parent      CharacterGroup?  @relation("GroupHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children    CharacterGroup[] @relation("GroupHierarchy")
+  
+  // Relações
   characters  Character[]
+  memberships CharacterGroupMembership[]
+  
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
+  
+  @@index([parentId])
+}
+
+// Tabela de junção para relação N:N entre Character e CharacterGroup (múltiplos grupos)
+model CharacterGroupMembership {
+  id          String         @id @default(cuid())
+  characterId String
+  character   Character      @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  groupId     String
+  group       CharacterGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  addedAt     DateTime       @default(now())
+  
+  @@unique([characterId, groupId])
+  @@index([characterId])
+  @@index([groupId])
+}
+
+// Tabela de junção para relação N:N entre User e Character
+model UserCharacter {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  assignedAt  DateTime  @default(now())
+
+  @@unique([userId, characterId])
 }
 
 model Character {
@@ -81,7 +119,9 @@ model Character {
   historySummary  String?
   historyFull     String?        // texto rico (HTML/JSON do TipTap)
   nex             String?        // "5%", "15%", ..., "99%"
-  trilha          String?        // Agente | Combatente | Especialista | Ocultista
+  trilha          String?        // Combatente | Especialista | Ocultista
+  origem          String?        // Origem do personagem
+  
   // Recursos vitais
   pvCurrent       Int            @default(0)
   pvMax           Int            @default(0)
@@ -89,45 +129,168 @@ model Character {
   sanMax          Int            @default(0)
   peCurrent       Int            @default(0)
   peMax           Int            @default(0)
-  // Atributos (valor do dado: "d4", "d6", "d8", "d12", "d20")
-  attrForca       String?        @default("d4")
-  attrAgilidade   String?        @default("d4")
-  attrIntelecto   String?        @default("d4")
-  attrPresenca    String?        @default("d4")
-  attrVigor       String?        @default("d4")
+  
+  // Atributos (valor de 1 a 6)
+  attrForca       Int            @default(1)
+  attrAgilidade   Int            @default(1)
+  attrIntelecto   Int            @default(1)
+  attrPresenca    Int            @default(1)
+  attrVigor       Int            @default(1)
+  
+  // Defesas e Resistências
+  defesa          Int            @default(10) // 10 + AGI + equipamentos
+  esquiva         Int            @default(0)  // AGI (bônus de Reflexos para reação)
+  bloqueio        Int            @default(0)  // VIG (bônus de Fortitude para RD)
+  fortitude       Int            @default(0)  // Resistência baseada em Vigor
+  reflexos        Int            @default(0)  // Resistência baseada em Agilidade
+  vontade         Int            @default(0)  // Resistência baseada em Presença
+  
+  // Movimento e Inventário
+  deslocamento    Float          @default(9)  // em metros
+  espacosInventario Int          @default(5)  // baseado em Força
+  
+  // Limite de PE por rodada (baseado no NEX)
+  limitePE        Int            @default(1)
+  
+  // Redução de Dano total (da proteção equipada)
+  reducaoDano     Int            @default(0)
+  
+  // Status de aprovação
+  isApproved      Boolean        @default(false) // se foi aprovado por admin
+  approvedAt      DateTime?
+  approvedById    String?
+  approvedBy      User?          @relation("ApprovedBy", fields: [approvedById], references: [id])
+  createdById     String?
+  createdBy       User?          @relation("CreatedBy", fields: [createdById], references: [id])
+  
   // Condições ativas (JSON array serializado)
   conditions      String?        @default("[]")
-  isRevealed      Boolean        @default(false) // visível para players
+  isRevealed      Boolean        @default(false) // visível para players (redundante com isApproved?)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
-  skills          CharacterSkill[]
-  abilities       CharacterAbility[]
-  inventory       InventoryItem[]
-  linkedUsers     User[]
+  skills             CharacterSkill[]
+  abilities          CharacterAbility[]
+  inventory          InventoryItem[]
+  inventoryLocations InventoryLocation[]
+  linkedUsers        UserCharacter[]     // Jogadores vinculados (N:N)
+  groupMemberships   CharacterGroupMembership[] // Grupos adicionais (N:N)
   combatParticipants CombatParticipant[]
 }
 
 model CharacterSkill {
-  id          String    @id @default(cuid())
-  characterId String
-  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
-  name        String
-  attribute   String    // forca | agilidade | intelecto | presenca | vigor
-  bonus       Int       @default(0)
-  trained     Boolean   @default(false)
+  id                  String    @id @default(cuid())
+  characterId         String
+  character           Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  name                String
+  attribute           String    // forca | agilidade | intelecto | presenca | vigor
+  // Campos legados mapeados
+  training            String    @default("destreinado") @map("training") // mantido para compatibilidade
+  otherBonus          Int       @default(0) @map("otherBonus")
+  // Novos campos SPEC_09
+  isTrained           Boolean   @default(false)
+  hasSpecialization   Boolean   @default(false)
+  specializationName  String?
+  bonusModifier       Int       @default(0)
+  isOfficial          Boolean   @default(true)
+  
+  @@index([characterId])
+}
+
+// ─────────────────────────────────────────
+// COMPÊNDIO DE HABILIDADES
+// ─────────────────────────────────────────
+
+model AbilityCompendium {
+  id                    String   @id @default(cuid())
+  name                  String
+  description           String?
+  type                  String   @default("habilidade") // habilidade
+  trilha                String?  // Combatente | Especialista | Ocultista | null
+  nex                   String?  // "5%", "15%", etc.
+  actionType            String   // passiva | acao_padrao | acao_movimento | reacao | acao_completa
+  peCost                Int      @default(0)
+  usesPerScene          Int?
+  requiresConcentration Boolean  @default(false)
+  tags                  String   @default("[]")
+  source                String   @default("official") // official | custom
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  characterAbilities    CharacterAbility[]
+}
+
+// ─────────────────────────────────────────
+// COMPÊNDIO DE RITUAIS
+// ─────────────────────────────────────────
+
+model RitualCompendium {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  effectDescription String?
+  element           String   // Morte | Sangue | Energia | Conhecimento | Medo
+  circle            Int      // 1 | 2 | 3
+  executionTime     String   // padrao | completa | reacao | livre | ritual
+  range             String   // toque | curto | medio | longo | extremo | pessoal
+  duration          String   // imediato | cena | sustentado | 1_dia | permanente
+  resistance        String?  // fortitude | reflexos | vontade | nenhuma
+  peCost            Int
+  nex               String?  // NEX mínimo para aprender
+  components        String   @default("[]") // JSON array de componentes
+  source            String   @default("official") // official | custom
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  characterAbilities CharacterAbility[]
 }
 
 model CharacterAbility {
+  id                  String    @id @default(cuid())
+  characterId         String
+  character           Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  name                String
+  description         String?
+  peCost              Int?      @default(0)
+  type                String    // habilidade | ritual
+  element             String?   // Morte | Sangue | Energia | Conhecimento | Medo (para rituais)
+  isActive            Boolean   @default(true)
+  // Novos campos SPEC_07
+  compendiumAbilityId String?
+  compendiumAbility   AbilityCompendium? @relation(fields: [compendiumAbilityId], references: [id])
+  compendiumRitualId  String?
+  compendiumRitual    RitualCompendium?  @relation(fields: [compendiumRitualId], references: [id])
+  nameOverride        String?
+  descriptionOverride String?
+  peCostOverride      Int?
+  currentUses         Int?
+  notes               String?
+  addedAt             DateTime  @default(now())
+  // Campos extras para rituais
+  actionType          String?   // passiva | acao_padrao | etc.
+  usesPerScene        Int?
+  trilha              String?
+  nex                 String?
+
+  @@index([characterId])
+  @@index([compendiumAbilityId])
+  @@index([compendiumRitualId])
+}
+
+// ─────────────────────────────────────────
+// LOCAIS DE INVENTÁRIO
+// ─────────────────────────────────────────
+
+model InventoryLocation {
   id          String    @id @default(cuid())
   characterId String
   character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
   name        String
-  description String?
-  peCost      Int?      @default(0)
-  type        String    // habilidade | ritual
-  element     String?   // Morte | Sangue | Energia | Conhecimento | Medo (para rituais)
-  isActive    Boolean   @default(true)
+  icon        String?
+  color       String?
+  order       Int       @default(0)
+
+  @@index([characterId])
 }
 
 model InventoryItem {
@@ -137,8 +300,59 @@ model InventoryItem {
   name        String
   quantity    Int       @default(1)
   description String?
-  category    String?   // arma | proteção | item | consumível
-  weight      Float?
+  category    String?   // arma | protecao | equipamento | consumivel | municao | outros
+  spaces      Int       @default(1) // Espaços ocupados no inventário
+  weight      Float?    @default(0) // Peso em kg
+  isEquipped  Boolean   @default(false) // Se está equipado
+  location    String    @default("equipado") // equipado | mochila | veiculo | local_custom
+  locationCustomName String? // Nome do local customizado
+  
+  // Campos legados para ARMAS (mantidos)
+  weaponType     String?  // melee | ranged | thrown
+  weaponGrip     String?  // light | one-handed | two-handed
+  damage         String?  // ex: "1d6", "2d8"
+  damageType     String?  // ballistic | cutting | impact | piercing | fire | chemical | electric | cold
+  criticalMargin Int?     // Margem de ameaça (18, 19, 20)
+  criticalMult   Int?     // Multiplicador de crítico (2, 3, 4)
+  weaponRange    Int?     // Alcance em metros (para armas à distância)
+  weaponProperties String? // JSON array de propriedades ["agil", "automatica", etc.]
+  
+  // Campos legados para PROTEÇÕES (mantidos)
+  protectionType  String?  // light | heavy
+  defenseBonus    Int?     // Bônus de defesa
+  damageReduction Int?     // Redução de dano (RD)
+  
+  // Novos campos SPEC_08 para ARMAS (wXxx)
+  wDamage           String?  // Dano da arma
+  wDamageType       String?  // corte | impacto | perfuracao | balistico | fogo | eletrico | paranormal
+  wRange            String?  // curto | medio | longo | extremo
+  wCritical         String?  // "19/x2", "20/x3", etc.
+  wProperties       String?  // JSON array de propriedades
+  wCurrentAmmo      Int?
+  wMaxAmmo          Int?
+  wAmmoType         String?
+  wTestAttribute    String?  // Atributo para teste de ataque
+  wTestSkill        String?  // Perícia para teste de ataque
+  wExtraDamageOnCrit String? // Dano extra no crítico
+  
+  // Novos campos SPEC_08 para PROTEÇÕES (pXxx)
+  pArmorType        String?  // leve | pesada
+  pDefenseBonus     Int?
+  pAgilityPenalty   Int?
+  pDiscreetPenalty  Int?
+  pProperties       String?  // JSON array de propriedades
+  
+  // Novos campos SPEC_08 para CONSUMÍVEIS (cXxx)
+  cEffect           String?
+  cDiceNotation     String?  // "1d6", "2d4+2", etc.
+  cUsesPerItem      Int?
+  cCurrentUses      Int?
+  
+  // Novos campos SPEC_08 para MUNIÇÃO (aXxx)
+  aAmmoType         String?
+  aQuantity         Int?
+
+  @@index([characterId])
 }
 
 // ─────────────────────────────────────────

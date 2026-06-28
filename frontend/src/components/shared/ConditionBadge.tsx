@@ -1,5 +1,7 @@
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { CONDITIONS_MAP } from '@/data/conditions';
+import { Tooltip } from './Tooltip';
 import type { ConditionType } from '@/types';
 
 interface ConditionBadgeProps {
@@ -9,43 +11,25 @@ interface ConditionBadgeProps {
   className?: string;
 }
 
-const conditionColors: Record<string, string> = {
-  // Condições críticas
-  Morto: 'bg-gray-600 text-gray-200',
-  Inconsciente: 'bg-gray-800 text-gray-300',
-  
-  // Condições de dano
-  Sangrando: 'bg-red-600 text-red-100',
-  
-  // Condições de medo
-  Abalado: 'bg-yellow-600 text-yellow-100',
-  Apavorado: 'bg-yellow-700 text-yellow-100',
-  
-  // Condições de controle
-  Atordoado: 'bg-orange-600 text-orange-100',
-  Confuso: 'bg-orange-500 text-orange-100',
-  Fascinado: 'bg-pink-500 text-pink-100',
-  Paralisado: 'bg-blue-600 text-blue-100',
-  
-  // Condições sensoriais
-  Cego: 'bg-slate-700 text-slate-200',
-  Surdo: 'bg-slate-600 text-slate-200',
-  
-  // Condições de movimento
-  Imóvel: 'bg-indigo-600 text-indigo-100',
-  Lento: 'bg-indigo-500 text-indigo-100',
-  
-  // Condições de debuff
-  Alquebrado: 'bg-purple-700 text-purple-100',
-  Debilitado: 'bg-purple-600 text-purple-100',
-  Desprevenido: 'bg-purple-500 text-purple-100',
-  Exausto: 'bg-amber-700 text-amber-100',
-  Fraco: 'bg-amber-600 text-amber-100',
-  Pressionado: 'bg-violet-600 text-violet-100',
-  Vulnerável: 'bg-rose-600 text-rose-100',
+// Cores por categoria (estilo sólido original)
+const categoryColors: Record<string, string> = {
+  medo: 'bg-red-600 text-red-100',
+  mental: 'bg-orange-600 text-orange-100',
+  paralisia: 'bg-blue-600 text-blue-100',
+  sentidos: 'bg-yellow-600 text-yellow-100',
+  fadiga: 'bg-green-600 text-green-100',
+  geral: 'bg-gray-600 text-gray-200',
 };
 
-const defaultColor = 'bg-purple-800 text-purple-200';
+// Cores do texto do tooltip por categoria
+const tooltipTextColors: Record<string, string> = {
+  medo: 'text-red-400',
+  mental: 'text-orange-400',
+  paralisia: 'text-blue-400',
+  sentidos: 'text-yellow-400',
+  fadiga: 'text-green-400',
+  geral: 'text-gray-400',
+};
 
 export function ConditionBadge({
   condition,
@@ -53,17 +37,20 @@ export function ConditionBadge({
   size = 'md',
   className,
 }: ConditionBadgeProps) {
-  const colorClass = conditionColors[condition] || defaultColor;
+  const conditionInfo = CONDITIONS_MAP[condition as ConditionType];
+  const colorClass = conditionInfo ? categoryColors[conditionInfo.category] : 'bg-purple-600 text-purple-100';
+  const tooltipColor = conditionInfo ? tooltipTextColors[conditionInfo.category] : 'text-purple-400';
+  const description = conditionInfo?.description || '';
 
   const sizeClasses = {
     sm: 'text-[10px] px-1.5 py-0.5',
     md: 'text-xs px-2 py-0.5',
   };
 
-  return (
+  const badge = (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-full font-medium transition-all',
+        'inline-flex items-center gap-1 rounded-full font-medium transition-all whitespace-nowrap cursor-default',
         colorClass,
         sizeClasses[size],
         onRemove && 'pr-1',
@@ -84,5 +71,13 @@ export function ConditionBadge({
         </button>
       )}
     </span>
+  );
+
+  if (!description) return badge;
+
+  return (
+    <Tooltip content={description} contentClassName={tooltipColor}>
+      {badge}
+    </Tooltip>
   );
 }
